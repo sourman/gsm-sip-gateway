@@ -497,6 +497,82 @@
             android:paddingVertical="24dp"
             android:visibility="gone" />
 
+        <!-- In-Call Controls (Mute, Keypad, Speaker) -->
+        <LinearLayout
+            android:id="@+id/llInCallControls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp"
+            android:visibility="gone">
+
+            <Button
+                android:id="@+id/btnInCallMute"
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:layout_margin="16dp"
+                android:text="MUTE"
+                android:textSize="12sp"
+                android:textColor="@color/text_primary"
+                android:backgroundTint="#333333" />
+
+            <Button
+                android:id="@+id/btnInCallKeypadToggle"
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:layout_margin="16dp"
+                android:text="KEYPAD"
+                android:textSize="12sp"
+                android:textColor="@color/text_primary"
+                android:backgroundTint="#333333" />
+
+            <Button
+                android:id="@+id/btnInCallSpeaker"
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:layout_margin="16dp"
+                android:text="SPEAKER"
+                android:textSize="12sp"
+                android:textColor="@color/text_primary"
+                android:backgroundTint="#333333" />
+        </LinearLayout>
+
+        <!-- Hidden In-Call Keypad for DTMF -->
+        <LinearLayout
+            android:id="@+id/llInCallKeypad"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="32dp"
+            android:visibility="gone">
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginBottom="16dp">
+                <TextView android:id="@+id/btnDtmf1" style="@style/DialButton" android:layout_width="0dp" android:layout_weight="1" android:text="1" />
+                <TextView android:id="@+id/btnDtmf2" style="@style/DialButton" android:layout_width="0dp" android:layout_weight="1" android:text="2" />
+                <TextView android:id="@+id/btnDtmf3" style="@style/DialButton" android:layout_width="0dp" android:layout_weight="1" android:text="3" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginBottom="16dp">
+                <TextView android:id="@+id/btnDtmf4" style="@style/DialButton" android:layout_width="0dp" android:layout_weight="1" android:text="4" />
+                <TextView android:id="@+id/btnDtmf5" style="@style/DialButton" android:layout_width="0dp" android:layout_weight="1" android:text="5" />
+                <TextView android:id="@+id/btnDtmf6" style="@style/DialButton" android:layout_width="0dp" android:layout_weight="1" android:text="6" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginBottom="16dp">
+                <TextView android:id="@+id/btnDtmf7" style="@style/DialButton" android:layout_width="0dp" android:layout_weight="1" android:text="7" />
+                <TextView android:id="@+id/btnDtmf8" style="@style/DialButton" android:layout_width="0dp" android:layout_weight="1" android:text="8" />
+                <TextView android:id="@+id/btnDtmf9" style="@style/DialButton" android:layout_width="0dp" android:layout_weight="1" android:text="9" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginBottom="16dp">
+                <TextView android:id="@+id/btnDtmfStar" style="@style/DialButton" android:layout_width="0dp" android:layout_weight="1" android:text="*" />
+                <TextView android:id="@+id/btnDtmf0" style="@style/DialButton" android:layout_width="0dp" android:layout_weight="1" android:text="0" />
+                <TextView android:id="@+id/btnDtmfHash" style="@style/DialButton" android:layout_width="0dp" android:layout_weight="1" android:text="#" />
+            </LinearLayout>
+        </LinearLayout>
+
         <View
             android:layout_width="0dp"
             android:layout_height="0dp"

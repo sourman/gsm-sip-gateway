@@ -184,6 +184,37 @@ object GsmCallManager {
         context.startActivity(intent)
     }
 
+    // ── Standalone Dialer Controls ──────────────────────
+
+    fun setSpeakerMode(enabled: Boolean) {
+        if (enabled) {
+            inCallService?.setAudioRoute(CallAudioState.ROUTE_SPEAKER)
+            Log.i(TAG, "Standalone: Speaker route selected")
+        } else {
+            val supported = inCallService?.callAudioState?.supportedRouteMask ?: 0
+            val newRoute = when {
+                (supported and CallAudioState.ROUTE_WIRED_HEADSET) != 0 -> CallAudioState.ROUTE_WIRED_HEADSET
+                (supported and CallAudioState.ROUTE_BLUETOOTH) != 0 -> CallAudioState.ROUTE_BLUETOOTH
+                else -> CallAudioState.ROUTE_EARPIECE
+            }
+            inCallService?.setAudioRoute(newRoute)
+            Log.i(TAG, "Standalone: Earpiece/Headset route selected ($newRoute)")
+        }
+    }
+
+    fun setMuteMode(muted: Boolean) {
+        inCallService?.setMuted(muted)
+        Log.i(TAG, "Standalone: Mute state set to $muted")
+    }
+
+    fun playDtmfTone(c: Char) {
+        activeCall?.playDtmfTone(c)
+    }
+
+    fun stopDtmfTone() {
+        activeCall?.stopDtmfTone()
+    }
+
     /** Music volume percent — from device profile. */
     val MUSIC_VOL_PERCENT: Int get() = profile.musicVolPercent
 
@@ -214,6 +245,8 @@ object GsmCallManager {
 
     /** Configure audio for GSM↔SIP bridge using the active device profile. */
     private fun configureAudioBridge() {
+        if (listener == null) return // Standalone mode: let Android handle audio routing natively
+        
         try {
             // Run ABOX/ALSA discovery on first call for diagnostics
             runMixerDiscovery()
@@ -309,6 +342,8 @@ object GsmCallManager {
 
     /** Restore audio state when call ends */
     private fun restoreAudio() {
+        if (listener == null) return // Standalone mode
+        
         try {
             // Single su call to restore all mixer controls
             batchMixerRestore()

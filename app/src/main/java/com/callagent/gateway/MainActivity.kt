@@ -119,6 +119,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var llIncomingActions: LinearLayout
     private lateinit var btnInCallAnswer: Button
     private lateinit var btnInCallReject: Button
+    private lateinit var llInCallControls: LinearLayout
+    private lateinit var btnInCallMute: Button
+    private lateinit var btnInCallKeypadToggle: Button
+    private lateinit var btnInCallSpeaker: Button
+    private lateinit var llInCallKeypad: LinearLayout
+    private var isMuted = false
+    private var isSpeakerOn = false
+    private var isKeypadVisible = false
     private var inCallOpen = false
     private var inCallOpenTime = 0L
     private var viewBeforeInCall = "dialer"
@@ -158,8 +166,10 @@ class MainActivity : AppCompatActivity() {
                         btnInCallEnd.visibility = View.VISIBLE
                         if (running) {
                             tvInCallStatus.text = "Connecting..."
+                            llInCallControls.visibility = View.GONE
                         } else {
                             tvInCallStatus.text = "Connected"
+                            llInCallControls.visibility = View.VISIBLE
                             if (callStartTime == 0L) {
                                 callStartTime = System.currentTimeMillis()
                                 tvInCallTimer.text = "00:00"
@@ -339,9 +349,20 @@ class MainActivity : AppCompatActivity() {
         btnInCallAnswer = findViewById(R.id.btnInCallAnswer)
         btnInCallReject = findViewById(R.id.btnInCallReject)
         
+        llInCallControls = findViewById(R.id.llInCallControls)
+        btnInCallMute = findViewById(R.id.btnInCallMute)
+        btnInCallKeypadToggle = findViewById(R.id.btnInCallKeypadToggle)
+        btnInCallSpeaker = findViewById(R.id.btnInCallSpeaker)
+        llInCallKeypad = findViewById(R.id.llInCallKeypad)
+        
         btnInCallEnd.setOnClickListener { endCallFromInCallScreen() }
         btnInCallAnswer.setOnClickListener { com.callagent.gateway.gsm.GsmCallManager.answerCall() }
         btnInCallReject.setOnClickListener { com.callagent.gateway.gsm.GsmCallManager.rejectCall() }
+
+        btnInCallMute.setOnClickListener { toggleMute() }
+        btnInCallKeypadToggle.setOnClickListener { toggleKeypad() }
+        btnInCallSpeaker.setOnClickListener { toggleSpeaker() }
+        setupInCallKeypad()
 
         // Settings-tab click listeners
         btnStart.setOnClickListener { if (running) stopGateway() else startGateway() }
@@ -1297,10 +1318,19 @@ class MainActivity : AppCompatActivity() {
         if (state == android.telecom.Call.STATE_RINGING) {
             llIncomingActions.visibility = View.VISIBLE
             btnInCallEnd.visibility = View.GONE
+            llInCallControls.visibility = View.GONE
         } else {
             llIncomingActions.visibility = View.GONE
             btnInCallEnd.visibility = View.VISIBLE
+            llInCallControls.visibility = if (running) View.GONE else View.VISIBLE
         }
+        
+        // Reset in-call controls
+        isMuted = false
+        isSpeakerOn = false
+        isKeypadVisible = false
+        updateInCallControlUI()
+        llInCallKeypad.visibility = View.GONE
         
         // Hide tabs, show in-call overlay
         tabbedRoot.visibility = View.GONE
@@ -1342,6 +1372,64 @@ class MainActivity : AppCompatActivity() {
                 btnCall.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#DC2626"))
             } else {
                 btnCall.backgroundTintList = null
+            }
+        }
+    }
+
+    private fun toggleMute() {
+        isMuted = !isMuted
+        com.callagent.gateway.gsm.GsmCallManager.setMuteMode(isMuted)
+        updateInCallControlUI()
+    }
+
+    private fun toggleSpeaker() {
+        isSpeakerOn = !isSpeakerOn
+        com.callagent.gateway.gsm.GsmCallManager.setSpeakerMode(isSpeakerOn)
+        updateInCallControlUI()
+    }
+
+    private fun toggleKeypad() {
+        isKeypadVisible = !isKeypadVisible
+        llInCallKeypad.visibility = if (isKeypadVisible) View.VISIBLE else View.GONE
+        updateInCallControlUI()
+    }
+
+    private fun updateInCallControlUI() {
+        val activeColor = ColorStateList.valueOf(Color.parseColor("#16A34A")) // Green
+        val inactiveColor = ColorStateList.valueOf(Color.parseColor("#333333")) // Dark gray
+        val activeTextColor = Color.WHITE
+        val inactiveTextColor = Color.parseColor("#E5E7EB") // Gray 200
+
+        btnInCallMute.backgroundTintList = if (isMuted) activeColor else inactiveColor
+        btnInCallMute.setTextColor(if (isMuted) activeTextColor else inactiveTextColor)
+        btnInCallMute.text = if (isMuted) "UNMUTE" else "MUTE"
+
+        btnInCallSpeaker.backgroundTintList = if (isSpeakerOn) activeColor else inactiveColor
+        btnInCallSpeaker.setTextColor(if (isSpeakerOn) activeTextColor else inactiveTextColor)
+        btnInCallSpeaker.text = if (isSpeakerOn) "EARPIECE" else "SPEAKER"
+
+        btnInCallKeypadToggle.backgroundTintList = if (isKeypadVisible) activeColor else inactiveColor
+        btnInCallKeypadToggle.setTextColor(if (isKeypadVisible) activeTextColor else inactiveTextColor)
+    }
+
+    private fun setupInCallKeypad() {
+        val digitButtons = mapOf(
+            R.id.btnDtmf0 to '0', R.id.btnDtmf1 to '1', R.id.btnDtmf2 to '2',
+            R.id.btnDtmf3 to '3', R.id.btnDtmf4 to '4', R.id.btnDtmf5 to '5',
+            R.id.btnDtmf6 to '6', R.id.btnDtmf7 to '7', R.id.btnDtmf8 to '8',
+            R.id.btnDtmf9 to '9', R.id.btnDtmfStar to '*', R.id.btnDtmfHash to '#'
+        )
+        for ((id, char) in digitButtons) {
+            val btn = findViewById<TextView>(id)
+            btn.setOnTouchListener { _, event ->
+                if (event.action == android.view.MotionEvent.ACTION_DOWN) {
+                    com.callagent.gateway.gsm.GsmCallManager.playDtmfTone(char)
+                    btn.isPressed = true
+                } else if (event.action == android.view.MotionEvent.ACTION_UP || event.action == android.view.MotionEvent.ACTION_CANCEL) {
+                    com.callagent.gateway.gsm.GsmCallManager.stopDtmfTone()
+                    btn.isPressed = false
+                }
+                true
             }
         }
     }
