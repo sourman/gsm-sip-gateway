@@ -269,18 +269,15 @@ class CallOrchestrator(
                     // Answer the SIP call off the main thread
                     Thread({
                         activeSipCall?.let { sipCall ->
-                            val rtpPort = allocateRtpPort()
+                            // Use the already allocated RTP port from early media
+                            val rtpPort = sipCall.localRtpPort
                             sipCall.listener = this
                             sipCall.accept(rtpPort)
 
-                            val addr = sipCall.remoteRtpAddress ?: sipClient.serverDomain
-                            val port = sipCall.remoteRtpPort
-                            val pt = sipCall.negotiatedPayloadType
-                            if (port > 0) {
-                                startRtp(rtpPort, addr, port, pt)
-                            }
+                            // Note: RTP is already running from handleOutboundFlow (183 Session Progress).
+                            // We do NOT call startRtp() again here, as it would disrupt the audio.
                         }
-                        Log.i(TAG, "Outbound bridge established")
+                        Log.i(TAG, "Outbound bridge established (200 OK sent)")
                     }, "SIP-Bridge").start()
                 }
             }
@@ -424,10 +421,34 @@ class CallOrchestrator(
         activeSipCall = sipCall
         listener?.onStateChanged(bridgeState, "Dialing $gsmDestination")
 
-        // Send 180 Ringing to SIP caller while GSM dials
+        // Allocate RTP port and send 183 Session Progress for early media
+        val localRtpPort = allocateRtpPort()
+        sipCall.localRtpPort = localRtpPort
+
         sipCall.originalInvite?.let { invite ->
-            val ringing = com.callagent.gateway.sip.SipBuilder.ringing180(invite, sipCall.localTag)
-            sipClient.sendTo(ringing, sipCall.remoteContactAddress ?: sipClient.serverAddress)
+            val progress183 = com.callagent.gateway.sip.SipBuilder.sessionProgress183(
+                msg = invite,
+                toTag = sipCall.localTag,
+                username = sipClient.username,
+                localIp = sipClient.publicIp,
+                localPort = sipClient.localPort,
+                rtpPort = localRtpPort
+            )
+            sipClient.sendTo(progress183, sipCall.remoteContactAddress ?: sipClient.serverAddress)
+
+            // Start RTP bridge immediately
+            val remoteAddr = sipCall.remoteRtpAddress ?: sipCall.remoteContactAddress?.first
+            val remotePort = sipCall.remoteRtpPort
+            val pt = sipCall.negotiatedPayloadType
+
+            if (remoteAddr != null && remotePort > 0) {
+                Thread({
+                    startRtp(localRtpPort, remoteAddr, remotePort, pt)
+                    Log.i(TAG, "Early media RTP started (183 Session Progress)")
+                }, "RTP-EarlyMedia").start()
+            } else {
+                Log.w(TAG, "Cannot start early media: missing remote RTP info")
+            }
         }
 
         // Dial via GSM SIM

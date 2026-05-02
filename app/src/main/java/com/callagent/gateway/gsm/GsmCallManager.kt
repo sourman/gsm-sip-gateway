@@ -81,7 +81,11 @@ object GsmCallManager {
                 } catch (e: Exception) {
                     Log.w(TAG, "Ringer silence failed: ${e.message}")
                 }
-                listener?.onIncomingGsmCall(call, number)
+                if (listener != null) {
+                    listener?.onIncomingGsmCall(call, number)
+                } else {
+                    notifyStandaloneDialer(service, number)
+                }
             }
             Call.STATE_DIALING, Call.STATE_CONNECTING -> {
                 Log.i(TAG, "Outgoing GSM call to $number")
@@ -114,7 +118,11 @@ object GsmCallManager {
                 // the orchestrator never learns about the incoming call.
                 val number = call.details?.handle?.schemeSpecificPart ?: "unknown"
                 Log.i(TAG, "GSM call ringing: $number (via state change)")
-                listener?.onIncomingGsmCall(call, number)
+                if (listener != null) {
+                    listener?.onIncomingGsmCall(call, number)
+                } else {
+                    inCallService?.let { notifyStandaloneDialer(it, number) }
+                }
             }
             Call.STATE_ACTIVE -> {
                 Log.i(TAG, "GSM call active")
@@ -140,6 +148,16 @@ object GsmCallManager {
             Log.i(TAG, "Answering GSM call")
             it.answer(it.details.videoState)
         }
+    }
+
+    private fun notifyStandaloneDialer(context: Context, number: String) {
+        // Gateway off — launch MainActivity as a standalone dialer
+        val intent = Intent(context, Class.forName("com.callagent.gateway.MainActivity")).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra("incoming_call", true)
+            putExtra("number", number)
+        }
+        context.startActivity(intent)
     }
 
     /** Reject a ringing GSM call */

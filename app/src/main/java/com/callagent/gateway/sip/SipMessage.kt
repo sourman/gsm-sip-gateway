@@ -304,6 +304,31 @@ object SipBuilder {
         }
     }
 
+    fun sessionProgress183(
+        msg: SipMessage,
+        toTag: String = tag(),
+        username: String,
+        localIp: String,
+        localPort: Int,
+        rtpPort: Int
+    ): String {
+        val sdp = buildSdp(localIp, rtpPort)
+        val to = msg.to ?: ""
+        val toWithTag = if (to.contains(";tag=")) to else "$to;tag=$toTag"
+        return buildString {
+            append("SIP/2.0 183 Session Progress\r\n")
+            append("Via: ${msg.via}\r\n")
+            append("To: $toWithTag\r\n")
+            append("From: ${msg.from}\r\n")
+            append("Call-ID: ${msg.callId}\r\n")
+            append("CSeq: ${msg.cseq}\r\n")
+            append("Contact: <sip:$username@$localIp:$localPort>\r\n")
+            append("Content-Type: application/sdp\r\n")
+            append("Content-Length: ${sdp.toByteArray().size}\r\n\r\n")
+            append(sdp)
+        }
+    }
+
     fun ack(
         targetUri: String,
         via: String?, toHeader: String?, fromHeader: String?,

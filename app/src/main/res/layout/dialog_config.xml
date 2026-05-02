@@ -102,4 +102,23 @@
         android:layout_marginTop="16dp"
         android:checked="true" />
 
+    <!-- Local Server -->
+    <CheckBox
+        android:id="@+id/cbLocalServer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Connect to local server (No STUN)"
+        android:textColor="@color/text_label"
+        android:layout_marginTop="8dp"
+        android:checked="false" />
+
+    <Button
+        android:id="@+id/btnLoadConfig"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="LOAD FROM FILE"
+        android:backgroundTint="@color/btn_secondary"
+        android:textColor="#FFFFFF" />
+
 </LinearLayout>

@@ -49,6 +49,7 @@ class GatewayService : Service() {
     private var cfgPort = 5060
     private var cfgUser = ""
     private var cfgPass = ""
+    private var cfgLocalServer = false
     private var currentLocalIp = ""
 
     // ── Call tracking ───────────────────────────────────
@@ -237,6 +238,7 @@ class GatewayService : Service() {
         val port = intent?.getIntExtra(EXTRA_PORT, 5060) ?: prefs.getInt("port", 5060)
         val username = intent?.getStringExtra(EXTRA_USER) ?: prefs.getString("user", "") ?: ""
         val password = intent?.getStringExtra(EXTRA_PASS) ?: prefs.getString("pass", "") ?: ""
+        val localServer = intent?.getBooleanExtra(EXTRA_LOCAL_SERVER, prefs.getBoolean("local_server", false)) ?: prefs.getBoolean("local_server", false)
 
         if (server.isEmpty() || username.isEmpty()) {
             Log.e(TAG, "Missing SIP configuration")
@@ -252,12 +254,14 @@ class GatewayService : Service() {
             .putInt("port", port)
             .putString("user", username)
             .putString("pass", password)
+            .putBoolean("local_server", localServer)
             .apply()
 
         cfgServer = server
         cfgPort = port
         cfgUser = username
         cfgPass = password
+        cfgLocalServer = localServer
 
         notifStatusText = "Connecting"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -296,16 +300,22 @@ class GatewayService : Service() {
         currentLocalIp = localIp
         broadcastLog("Local IP: $localIp")
 
-        // STUN: discover public IP for NAT traversal
-        val stunResult = try { StunClient.discover() } catch (e: Exception) {
-            Log.e(TAG, "STUN exception: ${e.javaClass.simpleName}: ${e.message}")
-            null
-        }
-        val publicIp = stunResult?.publicIp ?: localIp
-        if (stunResult != null) {
-            broadcastLog("STUN public IP: ${stunResult.publicIp}:${stunResult.publicPort}")
+        val publicIp = if (cfgLocalServer) {
+            broadcastLog("Local Server mode: bypassing STUN")
+            localIp
         } else {
-            broadcastLog("STUN failed, using local IP for SDP")
+            // STUN: discover public IP for NAT traversal
+            val stunResult = try { StunClient.discover() } catch (e: Exception) {
+                Log.e(TAG, "STUN exception: ${e.javaClass.simpleName}: ${e.message}")
+                null
+            }
+            if (stunResult != null) {
+                broadcastLog("STUN public IP: ${stunResult.publicIp}:${stunResult.publicPort}")
+                stunResult.publicIp
+            } else {
+                broadcastLog("STUN failed, using local IP for SDP")
+                localIp
+            }
         }
 
         if (stopped) return
@@ -670,17 +680,19 @@ class GatewayService : Service() {
         const val EXTRA_PORT = "port"
         const val EXTRA_USER = "user"
         const val EXTRA_PASS = "pass"
+        const val EXTRA_LOCAL_SERVER = "local_server"
         const val EXTRA_NUMBER = "number"
         const val STATUS_ACTION = "com.callagent.gateway.STATUS"
         const val LOG_ACTION = "com.callagent.gateway.LOG"
 
-        fun start(context: Context, server: String, port: Int, user: String, pass: String) {
+        fun start(context: Context, server: String, port: Int, user: String, pass: String, localServer: Boolean = false) {
             val intent = Intent(context, GatewayService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_SERVER, server)
                 putExtra(EXTRA_PORT, port)
                 putExtra(EXTRA_USER, user)
                 putExtra(EXTRA_PASS, pass)
+                putExtra(EXTRA_LOCAL_SERVER, localServer)
             }
             context.startForegroundService(intent)
         }

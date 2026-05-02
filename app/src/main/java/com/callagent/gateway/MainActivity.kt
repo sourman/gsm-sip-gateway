@@ -58,6 +58,12 @@ import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
+    private var activeConfigDialog: AlertDialog? = null
+
+    private val importConfigLauncher = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.GetContent()) { uri: Uri? ->
+        uri?.let { loadConfigFromFile(it) }
+    }
+
     // Settings-tab views
     private lateinit var statusDot: View
     private lateinit var tvStatusText: TextView
@@ -110,6 +116,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvInCallNumber: TextView
     private lateinit var tvInCallTimer: TextView
     private lateinit var btnInCallEnd: Button
+    private lateinit var llIncomingActions: LinearLayout
+    private lateinit var btnInCallAnswer: Button
+    private lateinit var btnInCallReject: Button
     private var inCallOpen = false
     private var inCallOpenTime = 0L
     private var viewBeforeInCall = "dialer"
@@ -134,9 +143,19 @@ class MainActivity : AppCompatActivity() {
                 lastGsmPollState = state
                 when (state) {
                     android.telecom.Call.STATE_CONNECTING -> tvInCallStatus.text = "Calling..."
-                    android.telecom.Call.STATE_DIALING -> tvInCallStatus.text = "Ringing..."
-                    android.telecom.Call.STATE_RINGING -> tvInCallStatus.text = "Ringing..."
+                    android.telecom.Call.STATE_DIALING -> {
+                        tvInCallStatus.text = "Ringing..."
+                        llIncomingActions.visibility = View.GONE
+                        btnInCallEnd.visibility = View.VISIBLE
+                    }
+                    android.telecom.Call.STATE_RINGING -> {
+                        tvInCallStatus.text = "Ringing..."
+                        llIncomingActions.visibility = View.VISIBLE
+                        btnInCallEnd.visibility = View.GONE
+                    }
                     android.telecom.Call.STATE_ACTIVE -> {
+                        llIncomingActions.visibility = View.GONE
+                        btnInCallEnd.visibility = View.VISIBLE
                         if (running) {
                             tvInCallStatus.text = "Connecting..."
                         } else {
@@ -316,7 +335,13 @@ class MainActivity : AppCompatActivity() {
         tvInCallNumber = findViewById(R.id.tvInCallNumber)
         tvInCallTimer = findViewById(R.id.tvInCallTimer)
         btnInCallEnd = findViewById(R.id.btnInCallEnd)
+        llIncomingActions = findViewById(R.id.llIncomingActions)
+        btnInCallAnswer = findViewById(R.id.btnInCallAnswer)
+        btnInCallReject = findViewById(R.id.btnInCallReject)
+        
         btnInCallEnd.setOnClickListener { endCallFromInCallScreen() }
+        btnInCallAnswer.setOnClickListener { com.callagent.gateway.gsm.GsmCallManager.answerCall() }
+        btnInCallReject.setOnClickListener { com.callagent.gateway.gsm.GsmCallManager.rejectCall() }
 
         // Settings-tab click listeners
         btnStart.setOnClickListener { if (running) stopGateway() else startGateway() }
@@ -337,6 +362,26 @@ class MainActivity : AppCompatActivity() {
 
         // Auto-start gateway if autoconnect enabled and credentials configured
         autoStartGateway()
+        
+        handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent) {
+        if (intent.getBooleanExtra("incoming_call", false)) {
+            val number = intent.getStringExtra("number") ?: "unknown"
+            if (!inCallOpen) {
+                openInCallScreen(number)
+                tvInCallStatus.text = "Incoming call"
+                llIncomingActions.visibility = View.VISIBLE
+                btnInCallEnd.visibility = View.GONE
+            }
+        }
     }
 
     private fun autoStartGateway() {
@@ -348,7 +393,8 @@ class MainActivity : AppCompatActivity() {
         if (server.isEmpty() || user.isEmpty()) return
         val port = prefs.getInt("port", 5060)
         val pass = prefs.getString("pass", "") ?: ""
-        GatewayService.start(this, server, port, user, pass)
+        val localServer = prefs.getBoolean("local_server", false)
+        GatewayService.start(this, server, port, user, pass, localServer)
         running = true
         updateToggleButton()
         appendLog("Auto-starting gateway: $user@$server:$port")
@@ -449,14 +495,22 @@ class MainActivity : AppCompatActivity() {
         val etUser = view.findViewById<EditText>(R.id.etSipUser)
         val etPassword = view.findViewById<EditText>(R.id.etSipPassword)
         val cbAutoconnect = view.findViewById<CheckBox>(R.id.cbAutoconnect)
+        val cbLocalServer = view.findViewById<CheckBox>(R.id.cbLocalServer)
+        val btnLoadConfig = view.findViewById<Button>(R.id.btnLoadConfig)
 
         etServer.setText(prefs.getString("server", "sip.callagent.pro"))
         etPort.setText(prefs.getInt("port", 5060).toString())
         etUser.setText(prefs.getString("user", ""))
         etPassword.setText(prefs.getString("pass", ""))
         cbAutoconnect.isChecked = prefs.getBoolean("autoconnect", true)
+        cbLocalServer.isChecked = prefs.getBoolean("local_server", false)
 
-        AlertDialog.Builder(this)
+        btnLoadConfig.setOnClickListener {
+            activeConfigDialog?.dismiss()
+            importConfigLauncher.launch("*/*")
+        }
+
+        activeConfigDialog = AlertDialog.Builder(this)
             .setTitle("SIP Configuration")
             .setView(view)
             .setPositiveButton("Save") { _, _ ->
@@ -470,11 +524,39 @@ class MainActivity : AppCompatActivity() {
                     .putString("user", user)
                     .putString("pass", pass)
                     .putBoolean("autoconnect", cbAutoconnect.isChecked)
+                    .putBoolean("local_server", cbLocalServer.isChecked)
                     .apply()
-                appendLog("Config saved: $user@$server:$port (autoconnect=${cbAutoconnect.isChecked})")
+                appendLog("Config saved: $user@$server:$port (autoconnect=${cbAutoconnect.isChecked}, local=${cbLocalServer.isChecked})")
             }
             .setNegativeButton("Cancel", null)
+            .setOnDismissListener { activeConfigDialog = null }
             .show()
+    }
+
+    private fun loadConfigFromFile(uri: Uri) {
+        try {
+            contentResolver.openInputStream(uri)?.use { inputStream ->
+                val jsonText = inputStream.bufferedReader().readText()
+                val json = org.json.JSONObject(jsonText)
+
+                val prefs = getSharedPreferences("gateway", MODE_PRIVATE)
+                val editor = prefs.edit()
+                
+                if (json.has("server")) editor.putString("server", json.getString("server"))
+                if (json.has("port")) editor.putInt("port", json.getInt("port"))
+                if (json.has("user")) editor.putString("user", json.getString("user"))
+                if (json.has("pass")) editor.putString("pass", json.getString("pass"))
+                if (json.has("local_server")) editor.putBoolean("local_server", json.getBoolean("local_server"))
+                
+                editor.apply()
+                
+                Toast.makeText(this, "Config loaded successfully", Toast.LENGTH_SHORT).show()
+                showConfigDialog() // Reopen dialog to show updated values
+            }
+        } catch (e: Exception) {
+            appendLog("ERROR loading config: ${e.message}")
+            Toast.makeText(this, "Failed to load config file", Toast.LENGTH_LONG).show()
+        }
     }
 
     // ── Info Dialog ─────────────────────────────────────
@@ -1209,6 +1291,17 @@ class MainActivity : AppCompatActivity() {
         tvInCallStatus.text = "Calling..."
         tvInCallTimer.visibility = View.GONE
         viewBeforeInCall = currentTab
+        
+        // Setup buttons based on current state
+        val state = com.callagent.gateway.gsm.GsmCallManager.activeCallState
+        if (state == android.telecom.Call.STATE_RINGING) {
+            llIncomingActions.visibility = View.VISIBLE
+            btnInCallEnd.visibility = View.GONE
+        } else {
+            llIncomingActions.visibility = View.GONE
+            btnInCallEnd.visibility = View.VISIBLE
+        }
+        
         // Hide tabs, show in-call overlay
         tabbedRoot.visibility = View.GONE
         inCallView.visibility = View.VISIBLE
@@ -1261,13 +1354,14 @@ class MainActivity : AppCompatActivity() {
         val port = prefs.getInt("port", 5060)
         val user = prefs.getString("user", "") ?: ""
         val pass = prefs.getString("pass", "") ?: ""
+        val localServer = prefs.getBoolean("local_server", false)
 
         if (server.isEmpty() || user.isEmpty()) {
             appendLog("ERROR: Open config and set server + username first")
             return
         }
 
-        GatewayService.start(this, server, port, user, pass)
+        GatewayService.start(this, server, port, user, pass, localServer)
 
         running = true
         updateToggleButton()
