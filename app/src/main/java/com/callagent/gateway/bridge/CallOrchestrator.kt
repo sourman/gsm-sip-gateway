@@ -308,13 +308,15 @@ class CallOrchestrator(
 
     override fun onGsmCallEnded(call: Call) {
         Log.i(TAG, "GSM call ended")
-        // Tear down if this is our tracked call, OR if we're in a call state
-        // but activeGsmCall was never set (call failed before going ACTIVE)
-        if (call == activeGsmCall ||
-            (activeGsmCall == null && bridgeState != BridgeState.IDLE)) {
+        // The gateway only handles one concurrent call.  Android Telecom
+        // sometimes uses different Call wrapper instances for the same call,
+        // so object identity checks can fail.  If the bridge is active and
+        // a call ends, unconditionally tear it down.
+        if (bridgeState != BridgeState.IDLE) {
             tearDown("GSM call ended")
         }
     }
+
 
     // ── SipCall.Listener ────────────────────────────────
 

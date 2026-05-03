@@ -88,6 +88,9 @@ class RtpSession(
     @Volatile private var playbackUsageName = "MEDIA"
     @Volatile private var firstRxInfo = ""
     @Volatile private var firstTxInfo = ""
+    private var lastFlowTxCount = 0L
+    private var lastFlowRxCount = 0L
+
 
     // Capture and playback rates may differ.  VOICE_CALL on MSM8930
     // only initializes at 8 kHz; G.722 decoding outputs 16 kHz PCM.
@@ -472,18 +475,15 @@ class RtpSession(
         if (wideband) {
             configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_CALL, "VOICE_CALL@16k", 16000))
             configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_CALL, "VOICE_CALL", 8000))
+            configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_DOWNLINK, "VOICE_DOWNLINK@16k", 16000))
+            configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_DOWNLINK, "VOICE_DOWNLINK", 8000))
         } else {
             configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_CALL, "VOICE_CALL", 8000))
+            configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_DOWNLINK, "VOICE_DOWNLINK", 8000))
         }
         configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_RECOGNITION, "VOICE_RECOGNITION", 8000))
         configs.add(SourceConfig(MediaRecorder.AudioSource.MIC, "MIC", 8000))
         configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_COMMUNICATION, "VOICE_COMMUNICATION", 8000))
-        if (wideband) {
-            configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_DOWNLINK, "VOICE_DOWNLINK@16k", 16000))
-            configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_DOWNLINK, "VOICE_DOWNLINK", 8000))
-        } else {
-            configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_DOWNLINK, "VOICE_DOWNLINK", 8000))
-        }
         return configs.filterNot { it.source in silentSourceIds }
     }
 
@@ -857,15 +857,23 @@ class RtpSession(
                         " vol:vc=$vc(m=$muted),mu=$vm mic=$micMute"
                     } ?: ""
                 } catch (_: Exception) { "" }
+                // Enhanced "TRX/REC" heartbeat logging for user visibility
+                val flowStats = "AUDIO-FLOW: [GSM -> SIP: REC=${rawCaptureRms} TRX=${if(txPacketCount > lastFlowTxCount) "OK" else "IDLE"}] " +
+                                "[SIP -> GSM: REC=${if(rxPacketCount > lastFlowRxCount) "OK" else "IDLE"} TRX=${playbackRms}]"
+                lastFlowTxCount = txPacketCount
+                lastFlowRxCount = rxPacketCount
+                Log.i(TAG, flowStats)
+                listener?.onRtpStats(flowStats)
+
                 // CPU/memory/thread diagnostics
                 val cpuInfo = getCpuStats()
-                val stats = "tx=$txPacketCount rx=$rxPacketCount play=$playbackFrames " +
+                val stats = "RTP-STATS: tx=$txPacketCount rx=$rxPacketCount play=$playbackFrames " +
                         "capRMS=$captureRms rawCapRMS=$rawCaptureRms playRMS=$playbackRms src=$audioSourceName " +
                         "rate=${captureRate}/${playbackRate} jbuf=${jitterBuffer.size} " +
                         "gates:echo=$echoGatedFrames noise=$noiseGatedFrames fwd=$forwardedFrames dt=$doubleTalkFrames echoG=${"%.2f".format(echoGainRatio)}" +
-                        "$cpuInfo$volInfo" + extraInfo
-                Log.i(TAG, "RTP: $stats")
-                listener?.onRtpStats(stats)
+                        "$cpuInfo$volInfo"
+                Log.d(TAG, stats) // Keep detailed stats in debug log
+
 
                 val elapsed = System.currentTimeMillis() - lastRtpReceivedTime
                 if (elapsed > RTP_TIMEOUT_MS) {

@@ -225,6 +225,10 @@ data class DeviceProfile(
                 board.contains("exynos9820") || hw.contains("exynos") && model.contains("sm-g970") ->
                     exynos9820()
 
+                // Xiaomi/Generic MSM8953 (Snapdragon 625)
+                board.contains("msm8953") || hw.contains("msm8953") ->
+                    msm8953()
+
                 // Generic Qualcomm — try incall_music, skip WCD9304-specific controls
                 hw.contains("qcom") || hw.contains("qualcomm") ->
                     genericQualcomm()
@@ -375,6 +379,61 @@ data class DeviceProfile(
          *    SIFS0=AudioTrack only (no modem downlink → no feedback).
          *    v2.8.42 noise was NSRC1→SIFS1 (speaker=modem downlink feedback).
          */
+        fun msm8953() = DeviceProfile(
+            name = "MSM8953",
+            mixerSetupCmd = buildString {
+                // Do NOT mute Voice Rx Device Mute! That kills VOICE_CALL capture completely on msm8953.
+                // Mute the speaker output codec explicitly instead so we don't hear caller audio.
+                append("tinymix 'RX1 Digital Volume' 0 2>/dev/null; ")
+                append("tinymix 'RX2 Digital Volume' 0 2>/dev/null; ")
+                append("tinymix 'RX3 Digital Volume' 0 2>/dev/null; ")
+                append("tinymix 'RX7 Digital Volume' 0 2>/dev/null; ")
+                append("tinymix 'SPK DRV Volume' 0 2>/dev/null; ")
+                
+                // Mute physical microphones (Decimators/ADCs)
+                append("tinymix 'DEC1 Volume' 0 2>/dev/null; ")
+                append("tinymix 'DEC2 Volume' 0 2>/dev/null; ")
+                append("tinymix 'DEC3 Volume' 0 2>/dev/null; ")
+                append("tinymix 'DEC4 Volume' 0 2>/dev/null; ")
+                append("tinymix 'DEC5 Volume' 0 2>/dev/null; ")
+                append("tinymix 'ADC1 Volume' 0 2>/dev/null; ")
+                append("tinymix 'ADC2 Volume' 0 2>/dev/null; ")
+                append("tinymix 'ADC3 Volume' 0 2>/dev/null; ")
+
+                // Leave Voice Tx unmuted for incall_music injection
+                append("tinymix 'Voice Tx Mute' 0 2>/dev/null; ")
+                // Enable incall_music mixer
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia1' 1 2>/dev/null; ")
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia2' 1 2>/dev/null")
+
+            },
+            mixerRestoreCmd = buildString {
+                append("tinymix 'Voice Tx Mute' 0 2>/dev/null; ")
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia1' 0 2>/dev/null; ")
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia2' 0 2>/dev/null; ")
+                
+                // Restore physical microphones (Middle-ground default ~84)
+                append("tinymix 'DEC1 Volume' 84 2>/dev/null; ")
+                append("tinymix 'DEC2 Volume' 84 2>/dev/null; ")
+                append("tinymix 'ADC1 Volume' 84 2>/dev/null; ")
+                append("tinymix 'ADC2 Volume' 84 2>/dev/null; ")
+                
+                // Restore physical speaker volumes
+                append("tinymix 'RX1 Digital Volume' 84 2>/dev/null; ")
+                append("tinymix 'RX2 Digital Volume' 84 2>/dev/null; ")
+                append("tinymix 'RX3 Digital Volume' 84 2>/dev/null; ")
+                append("tinymix 'SPK DRV Volume' 1 2>/dev/null")
+            },
+
+            playbackUsage = AudioAttributes.USAGE_MEDIA,
+            requireSpeakerMode = true,
+            voiceCallVolPercent = 0, // Keep Android stream volume at minimum
+            musicVolPercent = 100,
+            routeChangeDelayMs = 0,
+            incallMusicParam = "incall_music_enabled"
+        )
+
+        /** Samsung Galaxy S10e Exynos (Exynos 9820) */
         fun exynos9820() = DeviceProfile(
             name = "Exynos 9820 (S10e)",
             // ABOX mixer controls — exact names from /vendor/etc/mixer_paths.xml.
