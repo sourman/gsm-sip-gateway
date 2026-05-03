@@ -90,6 +90,9 @@ data class DeviceProfile(
 
     /** Delay (ms) for appops propagation on cold boot. */
     val appopsPropagationMs: Long,
+
+    /** Whether this is a Samsung ABOX (Exynos) device. */
+    val isAbox: Boolean = false,
 ) {
     companion object {
         private const val TAG = "DeviceProfile"
@@ -155,17 +158,18 @@ data class DeviceProfile(
                 val sb = StringBuilder()
                 val bin = tinymixBin
                 if (bin.isNotEmpty()) {
-                    // Compact discovery: NSRC/bridge state + ALSA cards only.
-                    // Full routing map established in v2.8.42 — no need for
-                    // bulk control dumps, enum lists, or mixer_paths.xml parsing.
-                    val result = RootShell.execForOutput(
-                        "echo '=== ALSA cards ==='; cat /proc/asound/cards 2>/dev/null; " +
+                    val aboxScan = if (detect().isAbox) {
                         "echo '=== NSRC/Bridge state ==='; " +
                         "for i in 0 1 2 3 4; do " +
                         "  echo -n \"NSRC\${i}=\"; $bin \"ABOX NSRC\${i}\" 2>/dev/null || echo 'N/A'; " +
                         "  echo -n \"NSRC\${i}_Bridge=\"; $bin \"ABOX NSRC\${i} Bridge\" 2>/dev/null || echo 'N/A'; " +
                         "done; " +
-                        "echo -n 'SoundType='; $bin 'ABOX Sound Type' 2>/dev/null || echo 'N/A'; " +
+                        "echo -n 'SoundType='; $bin 'ABOX Sound Type' 2>/dev/null || echo 'N/A'; "
+                    } else ""
+                    
+                    val result = RootShell.execForOutput(
+                        "echo '=== ALSA cards ==='; cat /proc/asound/cards 2>/dev/null; " +
+                        aboxScan +
                         "echo '=== total controls ==='; $bin 2>&1 | wc -l",
                         timeoutMs = 8000
                     )
@@ -323,6 +327,7 @@ data class DeviceProfile(
             voiceDownlinkWorks = false,
             routeChangeDelayMs = 700,
             appopsPropagationMs = 500,
+            isAbox = false,
         )
 
         /** Samsung Galaxy S10e (Exynos 9820 / Cirrus Logic CS47L93 Madera codec)
@@ -433,6 +438,7 @@ data class DeviceProfile(
             playbackUsage = -1,  // default = USAGE_MEDIA
             routeChangeDelayMs = 500,
             appopsPropagationMs = 300,
+            isAbox = true,
         )
 
         /** Generic Qualcomm device — tries incall_music, generic controls */
@@ -464,6 +470,7 @@ data class DeviceProfile(
             voiceDownlinkWorks = false,
             routeChangeDelayMs = 500,
             appopsPropagationMs = 300,
+            isAbox = false,
         )
 
         /** Generic Samsung Exynos — minimal mixer, rely on Android APIs */
@@ -491,6 +498,7 @@ data class DeviceProfile(
             voiceDownlinkWorks = true,
             routeChangeDelayMs = 500,
             appopsPropagationMs = 300,
+            isAbox = true,
         )
 
         /** Unknown device — no mixer hacks, pure Android APIs */
@@ -511,6 +519,7 @@ data class DeviceProfile(
             voiceDownlinkWorks = true,
             routeChangeDelayMs = 500,
             appopsPropagationMs = 300,
+            isAbox = false,
         )
     }
 }

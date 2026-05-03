@@ -394,31 +394,36 @@ object GsmCallManager {
         }
         try {
             val bin = DeviceProfile.tinymixBin
+            
             // Step 1: Readback BEFORE — see what HAL set during call setup
-            val before = RootShell.execForOutput(buildString {
-                append("echo 'NSRC0B:'; $bin 'ABOX NSRC0 Bridge' 2>&1; ")
-                append("echo 'NSRC1B:'; $bin 'ABOX NSRC1 Bridge' 2>&1; ")
-                append("echo 'NSRC0:'; $bin 'ABOX NSRC0' 2>&1; ")
-                append("echo 'NSRC1:'; $bin 'ABOX NSRC1' 2>&1; ")
-                append("echo 'SPUS0:'; $bin 'ABOX SPUS OUT0' 2>&1")
-            }, timeoutMs = 8000)
-            appLog("Mixer BEFORE: $before")
-
+            // Only on Samsung ABOX devices to avoid "control not found" noise on Qualcomm
+            if (profile.isAbox) {
+                val before = RootShell.execForOutput(buildString {
+                    append("echo 'NSRC0B:'; $bin 'ABOX NSRC0 Bridge' 2>&1; ")
+                    append("echo 'NSRC1B:'; $bin 'ABOX NSRC1 Bridge' 2>&1; ")
+                    append("echo 'NSRC0:'; $bin 'ABOX NSRC0' 2>&1; ")
+                    append("echo 'NSRC1:'; $bin 'ABOX NSRC1' 2>&1; ")
+                    append("echo 'SPUS0:'; $bin 'ABOX SPUS OUT0' 2>&1")
+                }, timeoutMs = 8000)
+                appLog("Mixer BEFORE: $before")
+            }
             // Step 2: Run mixer setup commands (all ABOX controls on card 0)
             // Use execForOutput to capture discovery/diagnostic output from setup commands
             val setupOutput = RootShell.execForOutput(resolvedSetup, timeoutMs = 8000)
             if (setupOutput.isNotBlank()) appLog("Mixer setup: $setupOutput")
 
             // Step 3: Readback AFTER — verify controls were actually changed
-            val readback = RootShell.execForOutput(buildString {
-                append("echo 'NSRC0B:'; $bin 'ABOX NSRC0 Bridge' 2>&1; ")
-                append("echo 'NSRC1B:'; $bin 'ABOX NSRC1 Bridge' 2>&1; ")
-                append("echo 'NSRC2B:'; $bin 'ABOX NSRC2 Bridge' 2>&1; ")
-                append("echo 'NSRC0:'; $bin 'ABOX NSRC0' 2>&1; ")
-                append("echo 'NSRC1:'; $bin 'ABOX NSRC1' 2>&1; ")
-                append("echo 'SPUS0:'; $bin 'ABOX SPUS OUT0' 2>&1")
-            }, timeoutMs = 10000)
-            appLog("Mixer AFTER: $readback")
+            if (profile.isAbox) {
+                val readback = RootShell.execForOutput(buildString {
+                    append("echo 'NSRC0B:'; $bin 'ABOX NSRC0 Bridge' 2>&1; ")
+                    append("echo 'NSRC1B:'; $bin 'ABOX NSRC1 Bridge' 2>&1; ")
+                    append("echo 'NSRC2B:'; $bin 'ABOX NSRC2 Bridge' 2>&1; ")
+                    append("echo 'NSRC0:'; $bin 'ABOX NSRC0' 2>&1; ")
+                    append("echo 'NSRC1:'; $bin 'ABOX NSRC1' 2>&1; ")
+                    append("echo 'SPUS0:'; $bin 'ABOX SPUS OUT0' 2>&1")
+                }, timeoutMs = 10000)
+                appLog("Mixer AFTER: $readback")
+            }
         } catch (e: Exception) {
             appLog("Mixer setup FAILED: ${e.message}")
         }

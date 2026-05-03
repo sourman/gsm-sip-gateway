@@ -1147,11 +1147,15 @@ class RtpSession(
             try {
                 // Run incall_music mixer commands, then readback key controls (card 0)
                 val bin = DeviceProfile.tinymixBin
-                val cmd = "$resolvedMixerCmd; " +
+                val cmd = if (profile.isAbox) {
+                    "$resolvedMixerCmd; " +
                     "echo 'NSRC1B:'; $bin 'ABOX NSRC1 Bridge' 2>&1; " +
                     "echo 'NSRC1:'; $bin 'ABOX NSRC1' 2>&1; " +
                     "echo 'NSRC0:'; $bin 'ABOX NSRC0' 2>&1; " +
                     "echo 'SPUS0:'; $bin 'ABOX SPUS OUT0' 2>&1"
+                } else {
+                    resolvedMixerCmd
+                }
                 val output = RootShell.execForOutput(cmd, timeoutMs = 8000)
                 val msg = "Mixer incall_music: $output"
                 Log.i(TAG, msg)
@@ -1266,18 +1270,20 @@ class RtpSession(
             if (tinymix.isNotEmpty()) {
                 Thread({
                     try {
-                        // Phase 1: NSRC routing + bridge state
-                        val routingCmd = buildString {
-                            append("echo '=== NSRC routing ==='; ")
-                            for (i in 0..2) {
-                                append("echo -n 'NSRC${i}='; $tinymix 'ABOX NSRC${i}' 2>/dev/null || echo 'N/A'; ")
-                                append("echo -n 'NSRC${i}_Bridge='; $tinymix 'ABOX NSRC${i} Bridge' 2>/dev/null || echo 'N/A'; ")
+                        // Phase 1: NSRC routing + bridge state (ABOX only)
+                        if (profile.isAbox) {
+                            val routingCmd = buildString {
+                                append("echo '=== NSRC routing ==='; ")
+                                for (i in 0..2) {
+                                    append("echo -n 'NSRC${i}='; $tinymix 'ABOX NSRC${i}' 2>/dev/null || echo 'N/A'; ")
+                                    append("echo -n 'NSRC${i}_Bridge='; $tinymix 'ABOX NSRC${i} Bridge' 2>/dev/null || echo 'N/A'; ")
+                                }
+                                append("echo -n 'SoundType='; $tinymix 'ABOX Sound Type' 2>/dev/null || echo 'N/A'")
                             }
-                            append("echo -n 'SoundType='; $tinymix 'ABOX Sound Type' 2>/dev/null || echo 'N/A'")
-                        }
-                        val routing = RootShell.execForOutput(routingCmd, timeoutMs = 8000)
-                        for (line in routing.lines().filter { it.isNotBlank() }) {
-                            Log.i(TAG, "Diag: $line")
+                            val routing = RootShell.execForOutput(routingCmd, timeoutMs = 8000)
+                            for (line in routing.lines().filter { it.isNotBlank() }) {
+                                Log.i(TAG, "Diag: $line")
+                            }
                         }
 
                         // Phase 2: mixer_paths.xml — voice call & incall_music paths
@@ -1333,10 +1339,9 @@ class RtpSession(
                         // Phase 4-5 removed in v2.8.43 — routing map fully
                         // established (Madera codec, SLIMTX, HPOUT, DSP, ASRC).
 
-                        // Phase 6: Delayed re-check (5s) — see if routing changes
-                        // after enableIncallMusic/enableIncallMusicViaMixer run.
+                        // Phase 6: Delayed re-check (5s) — ABOX only
                         Thread.sleep(5000)
-                        if (running.get()) {
+                        if (running.get() && profile.isAbox) {
                             val recheck = buildString {
                                 append("echo '=== NSRC re-check (t+5s) ==='; ")
                                 for (i in 0..2) {
