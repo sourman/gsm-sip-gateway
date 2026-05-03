@@ -839,7 +839,15 @@ class MainActivity : AppCompatActivity() {
                 this, "android.permission.CAPTURE_AUDIO_OUTPUT"
             ) == PackageManager.PERMISSION_GRANTED
 
+            val appOpsResult = com.callagent.gateway.service.RootShell.execForOutput("appops get ${packageName} RECORD_AUDIO", timeoutMs = 2000)
+            val hasAppOps = appOpsResult.contains("allow")
+
+            val profile = DeviceProfile.detect()
+            val tinymix = DeviceProfile.tinymixBin
+            val mixerDump = if (tinymix.isNotEmpty()) DeviceProfile.discoverMixerControls() else ""
+
             results.add(CheckResult("RECORD_AUDIO", hasRecordAudio))
+            results.add(CheckResult("AppOps RECORD_AUDIO", hasAppOps, if (hasAppOps) "allowed" else "denied (bg limit)"))
             results.add(CheckResult("CAPTURE_AUDIO_OUTPUT", hasCaptureOutput, if (hasCaptureOutput) "Magisk" else "needs Magisk"))
             results.add(CheckResult("ANSWER_PHONE_CALLS", hasAnswerCalls))
             results.add(CheckResult("CALL_PHONE", hasCallPhone))
@@ -953,6 +961,24 @@ class MainActivity : AppCompatActivity() {
 
                 addSectionHeader("System")
                 addResultRow("Root (su)", hasRoot, if (hasRoot) "" else "needed for Magisk")
+
+                addSectionHeader("Audio Architecture")
+                addResultRow("Profile", true, profile.name)
+                addResultRow("ABOX Device", profile.isAbox, if (profile.isAbox) "Samsung DSP" else "Standard HAL")
+                addResultRow("tinymix Tool", tinymix.isNotEmpty(), if (tinymix.isNotEmpty()) tinymix else "Not installed")
+
+                if (mixerDump.isNotEmpty()) {
+                    addSectionHeader("Mixer ALSA State")
+                    val tvMixer = TextView(this@MainActivity).apply {
+                        text = mixerDump.take(2000) + if (mixerDump.length > 2000) "\n... (truncated)" else ""
+                        textSize = 10f
+                        typeface = android.graphics.Typeface.MONOSPACE
+                        setTextColor(grayColor)
+                        setPadding((4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (8 * dp).toInt())
+                        setBackgroundColor(Color.parseColor("#11000000"))
+                    }
+                    container.addView(tvMixer)
+                }
 
                 val divider = View(this).apply {
                     layoutParams = LinearLayout.LayoutParams(
