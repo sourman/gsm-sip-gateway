@@ -108,7 +108,16 @@ data class DeviceProfile(
          *
          * Falls back to `which tinymix` in the root shell PATH.
          */
-        val tinymixBin: String by lazy { discoverTinymix() }
+        private var _tinymixBin: String? = null
+        val tinymixBin: String
+            get() {
+                val current = _tinymixBin
+                if (!current.isNullOrEmpty()) return current
+                val discovered = discoverTinymix()
+                if (discovered.isNotEmpty()) _tinymixBin = discovered
+                return discovered
+            }
+
 
         private fun discoverTinymix(): String {
             val paths = listOf(
