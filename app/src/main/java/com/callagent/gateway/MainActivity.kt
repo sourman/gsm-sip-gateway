@@ -839,7 +839,7 @@ class MainActivity : AppCompatActivity() {
                 this, "android.permission.CAPTURE_AUDIO_OUTPUT"
             ) == PackageManager.PERMISSION_GRANTED
 
-            val appOpsResult = com.callagent.gateway.service.RootShell.execForOutput("appops get ${packageName} RECORD_AUDIO", timeoutMs = 2000)
+            val appOpsResult = RootShell.execForOutput("appops get ${packageName} RECORD_AUDIO", timeoutMs = 2000)
             val hasAppOps = appOpsResult.contains("allow")
 
             val profile = DeviceProfile.detect()
