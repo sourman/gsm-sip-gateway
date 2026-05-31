@@ -350,7 +350,8 @@ object SipBuilder {
         targetUri: String,
         fromHeader: String?, toHeader: String?,
         callId: String?, cseq: Int,
-        username: String, localIp: String, localPort: Int
+        username: String, localIp: String, localPort: Int,
+        auth: String? = null
     ): String = buildString {
         append("BYE $targetUri SIP/2.0\r\n")
         append("Via: SIP/2.0/UDP $localIp:$localPort;branch=${branch()};rport\r\n")
@@ -360,6 +361,7 @@ object SipBuilder {
         append("Call-ID: $callId\r\n")
         append("CSeq: $cseq BYE\r\n")
         append("Contact: <sip:$username@$localIp:$localPort>\r\n")
+        if (auth != null) append("$auth\r\n")
         append("Content-Length: 0\r\n\r\n")
     }
 

@@ -7,6 +7,7 @@ import android.os.Build
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
+import android.media.AudioDeviceInfo
 import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.util.Log
@@ -342,6 +343,21 @@ class RtpSession(
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
         audioTrack = track
+
+        // Route playback to TYPE_TELEPHONY (modem TX uplink) on devices where
+        // the audio HAL needs an active PCM stream on the telephony endpoint
+        // (Pixel/Tensor aoc-snd-card).  Requires MODIFY_PHONE_STATE permission.
+        if (profile.playbackToTelephony) {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            val telephonyDev = am?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                ?.firstOrNull { it.type == AudioDeviceInfo.TYPE_TELEPHONY }
+            if (telephonyDev != null) {
+                val routed = track.setPreferredDevice(telephonyDev)
+                Log.i(TAG, "AudioTrack routed to TYPE_TELEPHONY: $routed (id=${telephonyDev.id})")
+            } else {
+                Log.w(TAG, "TYPE_TELEPHONY device not found — playback will use default device")
+            }
+        }
 
         // No platform AEC — AudioTrack is on USAGE_MEDIA (different stream
         // from AudioRecord), so platform AEC can't reference it anyway.

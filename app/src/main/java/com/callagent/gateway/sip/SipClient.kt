@@ -424,14 +424,14 @@ class SipClient(
     }
 
     /** Re-send INVITE with authentication */
-    fun resendInviteWithAuth(call: SipCall, authParams: SipAuth.AuthParams) {
+    fun resendInviteWithAuth(call: SipCall, authParams: SipAuth.AuthParams, isProxyAuth: Boolean = false) {
         val toHeader = call.toHeader ?: return
         // Extract target URI from To header
         val uriStart = toHeader.indexOf("sip:")
         val uriEnd = toHeader.indexOf('>', uriStart).let { if (it < 0) toHeader.length else it }
         val targetUri = if (uriStart >= 0) toHeader.substring(uriStart, uriEnd) else return
 
-        val auth = SipAuth.buildInviteAuthHeader(targetUri, username, password, authParams)
+        val auth = SipAuth.buildAuthHeader("INVITE", targetUri, username, password, authParams, isProxyAuth)
         val invite = SipBuilder.invite(
             targetUri, username, serverDomain,
             publicIp, localPort,

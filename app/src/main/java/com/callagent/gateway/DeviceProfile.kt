@@ -91,6 +91,13 @@ data class DeviceProfile(
     /** Delay (ms) for appops propagation on cold boot. */
     val appopsPropagationMs: Long,
 
+    /** Route playback AudioTrack to TYPE_TELEPHONY device (modem TX uplink).
+     *  Required on Pixel/Tensor aoc-snd-card where tinymix INCALL controls
+     *  alone don't bridge media audio into the modem path. The AOC DSP needs
+     *  an active PCM stream on the telephony endpoint.
+     *  Requires MODIFY_PHONE_STATE permission (granted via Magisk priv-app). */
+    val playbackToTelephony: Boolean = false,
+
     /** Whether this is a Samsung ABOX (Exynos) device. */
     val isAbox: Boolean = false,
 ) {
@@ -228,6 +235,10 @@ data class DeviceProfile(
                 // Xiaomi/Generic MSM8953 (Snapdragon 625)
                 board.contains("msm8953") || hw.contains("msm8953") ->
                     msm8953()
+
+                // Google Pixel 7 (Tensor G1 / aoc-snd-card)
+                hw.contains("tensor") || model.contains("pixel 7") ->
+                    pixel7Tensor()
 
                 // Generic Qualcomm — try incall_music, skip WCD9304-specific controls
                 hw.contains("qcom") || hw.contains("qualcomm") ->
@@ -520,6 +531,70 @@ data class DeviceProfile(
             routeChangeDelayMs = 500,
             appopsPropagationMs = 300,
             isAbox = true,
+        )
+
+        /** Google Pixel 7 (Tensor G1 / aoc-snd-card)
+         *
+         *  Audio framework: AoC (Audio over CROS) — 596 tinymix controls.
+         *  Separate INCALL pipeline for modem audio:
+         *    INCALL_TX = audio to modem (uplink / GSM TX)
+         *    INCALL_RX = audio from modem (downlink / GSM RX)
+         *    EP1-EP7 = audio endpoints (playback/capture)
+         *
+         *  SIP→GSM bridge strategy:
+         *    1. Enable Incall Playback Stream0 (opens INCALL TX path)
+         *    2. Route playback EPs to INCALL_TX via EPx TX Mixer INCALL_TX
+         *    3. Mute physical mic (Voice Call Mic Mute + Incall Mic Mute)
+         *    4. Set incall_music_enabled=true (HAL may assist with routing)
+         *
+         *  The AudioTrack (USAGE_MEDIA → STREAM_MUSIC) plays through one of
+         *  the EPs.  Routing that EP's TX to INCALL_TX bridges the audio
+         *  into the modem uplink — same principle as Qualcomm's
+         *  Incall_Music Audio Mixer MultiMedia1.
+         */
+        fun pixel7Tensor() = DeviceProfile(
+            name = "Pixel 7 (Tensor G1)",
+            mixerSetupCmd = buildString {
+                // Mute physical mic
+                append("tinymix 'Voice Call Mic Mute' 1 2>/dev/null; ")
+                append("tinymix 'Incall Mic Mute' 1 2>/dev/null; ")
+                // Enable INCALL playback stream (opens modem TX path)
+                append("tinymix 'Incall Playback Stream0' 1 2>/dev/null; ")
+                // Route EP6 TX to INCALL_TX (EP6 = deep-buffer-playback from mixer_paths.xml)
+                append("tinymix 'EP6 TX Mixer INCALL_TX' 1 2>/dev/null; ")
+                // Also route EP2 (low-latency-playback) for coverage
+                append("tinymix 'EP2 TX Mixer INCALL_TX' 1 2>/dev/null")
+            },
+            mixerRestoreCmd = buildString {
+                append("tinymix 'Voice Call Mic Mute' 0 2>/dev/null; ")
+                append("tinymix 'Incall Mic Mute' 0 2>/dev/null; ")
+                append("tinymix 'Incall Playback Stream0' 0 2>/dev/null; ")
+                append("tinymix 'EP6 TX Mixer INCALL_TX' 0 2>/dev/null; ")
+                append("tinymix 'EP2 TX Mixer INCALL_TX' 0 2>/dev/null; ")
+                append("tinymix 'INCALL_RX Mixer EP5' 0 2>/dev/null; ")
+                append("tinymix 'Incall Capture Stream0' Off 2>/dev/null")
+            },
+            mixerIncallMusicCmd = buildString {
+                // Re-enable INCALL path after AudioTrack.play()
+                append("tinymix 'Incall Playback Stream0' 1 2>/dev/null; ")
+                // EP6 = deep-buffer-playback (USAGE_MEDIA AudioTrack)
+                append("tinymix 'EP6 TX Mixer INCALL_TX' 1 2>/dev/null; ")
+                append("tinymix 'EP2 TX Mixer INCALL_TX' 1 2>/dev/null")
+            },
+            mixerDiagGrep = "tinymix 2>&1 | grep -iE '(INCALL|Incall|Voice Call|EP[1-6].*Mixer)'",
+            musicVolPercent = 100,
+            captureGain = 2,
+            playbackGain = 2,
+            noiseGateThreshold = 300,
+            echoGateThreshold = 300,
+            doubleTalkRatio = 1.5f,
+            requireSpeakerMode = true,
+            incallMusicParam = "incall_music_enabled",
+            voiceDownlinkWorks = false,
+            routeChangeDelayMs = 500,
+            appopsPropagationMs = 500,
+            playbackToTelephony = true,
+            isAbox = false,
         )
 
         /** Generic Qualcomm device — tries incall_music, generic controls */
