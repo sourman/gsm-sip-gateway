@@ -425,12 +425,25 @@ data class DeviceProfile(
                 append("tinymix 'SPK DRV Volume' 1 2>/dev/null")
             },
 
-            playbackUsage = AudioAttributes.USAGE_MEDIA,
-            requireSpeakerMode = true,
-            voiceCallVolPercent = 0, // Keep Android stream volume at minimum
+            mixerIncallMusicCmd = buildString {
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia1' 1 2>/dev/null; ")
+                append("tinymix 'Incall_Music Audio Mixer MultiMedia2' 1 2>/dev/null; ")
+                append("tinymix 'Voice Tx Mute' 0 2>/dev/null")
+            },
+            mixerDiagGrep = "tinymix 2>&1 | grep -iE '(voice|incall|music|multimedia|rx|dec|adc)'",
             musicVolPercent = 100,
+            captureGain = 2,
+            playbackGain = 2,
+            noiseGateThreshold = 350,
+            echoGateThreshold = 300,
+            doubleTalkRatio = 1.5f,
+            requireSpeakerMode = true,
+            incallMusicParam = "incall_music_enabled",
+            voiceDownlinkWorks = false,
+            voiceCallVolPercent = 0,
+            playbackUsage = AudioAttributes.USAGE_MEDIA,
             routeChangeDelayMs = 0,
-            incallMusicParam = "incall_music_enabled"
+            appopsPropagationMs = 300,
         )
 
         /** Samsung Galaxy S10e Exynos (Exynos 9820) */

@@ -298,12 +298,25 @@ class SipClient(
                 listener?.onRegistered()
                 true
             }
-            401, 407 -> {
-                uiLog("REGISTER ${msg.statusCode} challenge, sending auth")
+            401 -> {
+                uiLog("REGISTER 401 challenge, sending auth")
                 val authParams = SipAuth.parseChallenge(msg)
                 if (authParams != null) {
                     val uri = "sip:$serverDomain:$serverPort"
-                    val auth = SipAuth.buildAuthHeader("REGISTER", uri, username, password, authParams)
+                    val auth = SipAuth.buildAuthHeader("REGISTER", uri, username, password, authParams, isProxyAuth = false)
+                    sendRegister(auth)
+                } else {
+                    uiLog("Failed to parse auth challenge")
+                    registrationLatch?.countDown()
+                }
+                false
+            }
+            407 -> {
+                uiLog("REGISTER 407 challenge, sending auth")
+                val authParams = SipAuth.parseChallenge(msg)
+                if (authParams != null) {
+                    val uri = "sip:$serverDomain:$serverPort"
+                    val auth = SipAuth.buildAuthHeader("REGISTER", uri, username, password, authParams, isProxyAuth = true)
                     sendRegister(auth)
                 } else {
                     uiLog("Failed to parse auth challenge")
