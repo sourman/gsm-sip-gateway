@@ -283,6 +283,10 @@ class SipClient(
             callIdBase, cseq.getAndIncrement(),
             auth
         )
+        if (auth != null) {
+            Log.d(TAG, "REGISTER with auth header: ${auth.take(200)}")
+            Log.d(TAG, "REGISTER full packet: ${msg.take(500)}")
+        }
         sendTo(msg, serverAddress)
     }
 
