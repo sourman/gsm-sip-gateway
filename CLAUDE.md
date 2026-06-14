@@ -1,6 +1,6 @@
 # GSM-SIP Gateway
 
-Bridges GSM calls (local SIM) with Asterisk via SIP. Upstream: https://github.com/sourman/gsm-sip-gateway
+Bridges GSM calls (local SIM) with Asterisk via SIP. Upstream: https://github.com/rmeehub/gsm-sip-gateway
 
 ## Build & Install
 
@@ -18,29 +18,22 @@ Install the Magisk module (`gateway-magisk.zip`) via Magisk Manager, reboot, set
 
 ## Restoring Root After Android Update
 
-Android updates overwrite the patched init_boot, killing Magisk root. Restore process:
+Android updates overwrite the patched init_boot, killing Magisk root. Re-patch and flash to the **active** slot:
 
-1. **Check state**: `adb shell getprop ro.boot.slot_suffix` → note active slot (`_a` or `_b`)
-2. **Get matching factory image**: `https://developers.google.cn/android/images?hl=en` → find panther build
-3. **Extract init_boot.img** from factory zip → nested `image-panther-*.zip` → `init_boot.img`
-4. **Push to phone**: `adb push init_boot.img /sdcard/Download/`
-5. **Patch with Magisk app**: Install → Select and Patch a File → pick init_boot.img
-6. **Pull patched image**: `adb pull /sdcard/Download/magisk_patched-*.img`
-7. **Reboot to bootloader**: `adb reboot bootloader`
-8. **Flash to active slot**: `fastboot flash init_boot_b magisk_patched.img` (match `_b`/`_a` to slot)
-9. **Reboot**: `fastboot reboot`
+```bash
+adb shell getprop ro.boot.slot_suffix          # _a or _b — flash to THIS slot only
+# matching panther factory image: https://developers.google.cn/android/images
+adb push init_boot.img /sdcard/Download/       # then Magisk app → Install → Select and Patch a File
+adb pull /sdcard/Download/magisk_patched-*.img
+adb reboot bootloader
+/mnt/c/platform-tools/fastboot.exe flash init_boot_b magisk_patched.img   # match _b/_a to slot
+/mnt/c/platform-tools/fastboot.exe reboot
+```
 
-### Notes
-- Bootloader stays unlocked across updates — no need to re-unlock
-- `adb root` doesn't work on production builds, can't dd extract — must use factory image
-- Factory image URL pattern: `https://dl.google.com/dl/android/aosp/panther-<BUILD>-factory-<hash>.zip`
-- Windows fastboot required from WSL: `/mnt/c/platform-tools/fastboot.exe`
-- scrcpy useful when phantom touches make screen unusable
-- The gateway app's Magisk module (audio concurrency bypass + privapp permissions) must be re-installed after restoring root
-
-## Project Structure
-
-- `app/` — Android app source (Kotlin)
-- `magisk/` — Magisk module template (system.prop, privapp permissions, install script)
-- `tools/` — Audio tools (tinymix, tinycap)
-- `build.sh` — Builds APK and packages into Magisk module zip
+Gotchas:
+- **Flash the active slot only** (`init_boot_a`/`init_boot_b` per `ro.boot.slot_suffix`), not both.
+- **Can't `dd`-extract init_boot** on production builds (`adb root` is denied) — must use the factory image.
+- **WSL fastboot is broken** — use the Windows binary at `/mnt/c/platform-tools/fastboot.exe`.
+- **Bootloader stays unlocked** across updates; no re-unlock needed.
+- **Re-install the gateway Magisk module** after restoring root (audio-concurrency bypass + privapp perms).
+- Drive the phone with `scrcpy` if phantom touches make the screen unusable.
