@@ -702,7 +702,18 @@ class RtpSession(
                 }
 
                 val shouldForward: Boolean
-                if (decayingPlaybackRms > echoGateThreshold) {
+                // When playback routes to TYPE_TELEPHONY (modem TX), audio goes
+                // directly to the GSM uplink — no acoustic speaker→mic echo.
+                // Skip echo gate entirely and only apply noise gate.
+                if (profile.playbackToTelephony) {
+                    if (rawCaptureRms < noiseGateThreshold) {
+                        shouldForward = false
+                        noiseGatedFrames++
+                    } else {
+                        shouldForward = true
+                        forwardedFrames++
+                    }
+                } else if (decayingPlaybackRms > echoGateThreshold) {
                     // Agent is speaking (or echo tail still decaying) —
                     // check for double-talk (barge-in).
                     val expectedEcho = (echoGainRatio * decayingPlaybackRms).toInt()

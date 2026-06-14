@@ -583,9 +583,9 @@ data class DeviceProfile(
             },
             mixerDiagGrep = "tinymix 2>&1 | grep -iE '(INCALL|Incall|Voice Call|EP[1-6].*Mixer)'",
             musicVolPercent = 100,
-            captureGain = 2,
+            captureGain = 4,
             playbackGain = 2,
-            noiseGateThreshold = 300,
+            noiseGateThreshold = 15,   // VOICE_DOWNLINK captures very quietly on aoc-snd-card
             echoGateThreshold = 300,
             doubleTalkRatio = 1.5f,
             requireSpeakerMode = true,
