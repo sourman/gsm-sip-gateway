@@ -2,6 +2,15 @@
 
 Bridges GSM calls (local SIM) with Asterisk via SIP. Upstream: https://github.com/rmeehub/gsm-sip-gateway
 
+## Terminology
+
+- **Gateway phone** — the Android device running this app (holds the SIM, bridges calls between the calling phone and the SIP side).
+- **Calling phone** — the remote party on the GSM leg (whoever the SIM is talking to — inbound caller or outbound callee).
+- **SIP side / agent** — the Asterisk + AI voice agent on the VoIP leg.
+- **Modem RX / downlink / INCALL_RX** — audio coming FROM the calling phone; captured and sent to the SIP side.
+- **Modem TX / uplink / INCALL_TX** — audio going TO the calling phone; the SIP agent's audio is injected here.
+- **Mic injection** — the open bug: the gateway phone's own physical mic leaking into the bridge. The gateway must be a pure relay; its mic should never be audible on either leg.
+
 ## Build & Install
 
 Prereq: run `sudo ./setup.sh` once to install a JDK 17+ and the Android SDK (auto-detects `openjdk-21-jdk` on Debian 13/trixie, else `openjdk-17-jdk`).
@@ -32,8 +41,14 @@ adb shell su -c "md5sum /system/priv-app/Gateway/Gateway.apk"   # must match
 
 ## Devices
 
-- **Pixel 7** (panther) — used for Magisk/root work
-- **Samsung Galaxy S10e** — target gateway device with LineageOS
+Goal: support as many Android devices as possible. Each device is handled by a `DeviceProfile` (`app/src/main/java/com/callagent/gateway/DeviceProfile.kt`) that encodes its SoC/codec mixer controls. Devices with tuned, tested profiles:
+
+- **Google Pixel 7** — Tensor G1, aoc-snd-card
+- **Samsung Galaxy S10e** — Exynos 9820, ABOX/Madera
+- **Generic MSM8953** — Snapdragon 625 (e.g. some Xiaomi)
+- **Samsung Galaxy S4 Mini** — MSM8930, WCD9304
+
+Unknown devices auto-detect to a generic Qualcomm / Exynos / Generic profile (Android APIs only, no mixer hacks). To support a new device: add a profile, dump its `tinymix` controls via the in-app diagnostics, and tune the mixer setup/restore commands.
 
 ## Restoring Root After Android Update
 
