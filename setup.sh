@@ -35,8 +35,15 @@ install_system_packages() {
 
     apt-get update -qq
 
+    # Debian 13 (trixie) ships openjdk-21; older releases have openjdk-17.
+    if apt-cache show openjdk-21-jdk >/dev/null 2>&1; then
+        JDK_PKG="openjdk-21-jdk"
+    else
+        JDK_PKG="openjdk-17-jdk"
+    fi
+
     apt-get install -y -qq \
-        openjdk-17-jdk \
+        "$JDK_PKG" \
         curl \
         unzip \
         zip \
