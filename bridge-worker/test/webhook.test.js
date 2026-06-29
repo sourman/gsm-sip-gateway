@@ -155,7 +155,10 @@ describe("verifyWebhook", () => {
 });
 
 describe("worker fetch /twiml", () => {
-  const env = { OPENAI_PROJECT_ID: "proj_Cy8aafQOE2xGPfAh45zFq0VG" };
+  const env = {
+    OPENAI_PROJECT_ID: "proj_Cy8aafQOE2xGPfAh45zFq0VG",
+    TRUNK_DIAL_NUMBER: "+17402185427",
+  };
 
   it("emits answerOnBridge=\"true\" on the Dial", async () => {
     const res = await worker.fetch(
@@ -168,16 +171,14 @@ describe("worker fetch /twiml", () => {
     expect(xml).toContain('answerOnBridge="true"');
   });
 
-  it("targets the OpenAI SIP endpoint built from env.OPENAI_PROJECT_ID", async () => {
+  it("dials the trunk number from env.TRUNK_DIAL_NUMBER", async () => {
     const res = await worker.fetch(
       new Request("https://sip-webhook.loom.li/twiml"),
       env,
       { waitUntil() {} },
     );
     const xml = await res.text();
-    expect(xml).toContain(
-      `sip:${env.OPENAI_PROJECT_ID}@sip.api.openai.com;transport=tls`,
-    );
+    expect(xml).toContain(`<Number>${env.TRUNK_DIAL_NUMBER}</Number>`);
   });
 });
 

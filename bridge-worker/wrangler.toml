@@ -11,6 +11,7 @@ routes = [
 
 [vars]
 OPENAI_PROJECT_ID = "proj_Cy8aafQOE2xGPfAh45zFq0VG"
+TRUNK_DIAL_NUMBER = "+17402185427"
 REALTIME_MODEL = "gpt-realtime-2"
 REALTIME_VOICE = "alloy"
 # OPENAI_API_KEY and OPENAI_WEBHOOK_SECRET are set via `wrangler secret put`

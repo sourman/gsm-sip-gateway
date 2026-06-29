@@ -34,14 +34,13 @@ const worker = {
     // spurious ringback so the call stays bridged to the agent with silence-free
     // audio once connected.
     if (request.method === "GET" && url.pathname === "/twiml") {
-      const projectId = env.OPENAI_PROJECT_ID;
-      const sipTarget = `sip:${projectId}@sip.api.openai.com;transport=tls`;
+      const dialNumber = env.TRUNK_DIAL_NUMBER;
       const callback = `https://${url.host}/recording`;
       const twiml =
         `<?xml version="1.0" encoding="UTF-8"?>\n` +
         `<Response>\n` +
-        `  <Dial answerOnBridge="true" record="record-from-answer-dual" recordingStatusCallback="${callback}" trim="do-not-trim">\n` +
-        `    <Sip>${sipTarget}</Sip>\n` +
+        `  <Dial answerOnBridge="true" callerId="${dialNumber}" record="record-from-answer-dual" recordingStatusCallback="${callback}" trim="do-not-trim">\n` +
+        `    <Number>${dialNumber}</Number>\n` +
         `  </Dial>\n` +
         `</Response>`;
       return new Response(twiml, {
@@ -103,8 +102,10 @@ const worker = {
     const acceptBody = {
       type: "realtime",
       model: env.REALTIME_MODEL || "gpt-realtime-2",
-      voice: env.REALTIME_VOICE || "alloy",
       instructions: INSTRUCTIONS,
+      audio: {
+        output: { voice: env.REALTIME_VOICE || "alloy" },
+      },
     };
 
     const acceptResp = await fetch(
@@ -125,14 +126,15 @@ const worker = {
       return new Response("Accept failed", { status: 502 });
     }
 
-    console.log(`Accepted call_id=${callId}; attaching monitor WebSocket`);
-    ctx.waitUntil(monitorSession(callId, env, ctx));
+    console.log(`Accepted call_id=${callId}; attaching monitor WebSocket in 1s`);
+    ctx.waitUntil(monitorSession(callId, env));
 
     return new Response("", { status: 200 });
   },
 };
 
-async function monitorSession(callId, env, ctx) {
+async function monitorSession(callId, env) {
+  await new Promise((r) => setTimeout(r, 1000));
   const wsUrl = `wss://api.openai.com/v1/realtime?call_id=${encodeURIComponent(callId)}`;
   let ws;
   try {
