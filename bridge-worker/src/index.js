@@ -23,6 +23,22 @@ const worker = {
       return new Response("ok\n", { status: 200 });
     }
 
+    // TwiML for outbound PSTN test: Twilio dials the gateway SIM and plays a
+    // known MP3 on the PSTN leg so we can verify Twilio → GSM → SIP → OpenAI.
+    if (request.method === "GET" && url.pathname === "/outbound-test") {
+      const mp3 = `https://${url.host}/sample-speech-1m.mp3`;
+      const twiml =
+        `<?xml version="1.0" encoding="UTF-8"?>\n` +
+        `<Response>\n` +
+        `  <Play>${mp3}</Play>\n` +
+        `  <Pause length="5"/>\n` +
+        `</Response>`;
+      return new Response(twiml, {
+        status: 200,
+        headers: { "Content-Type": "application/xml" },
+      });
+    }
+
     // TwiML returned to Twilio when the SIP domain receives an inbound INVITE.
     // Bridges the call to the OpenAI Realtime SIP connector via the Elastic SIP
     // Trunk, with dual-channel call recording preserved for evidence.
@@ -162,8 +178,13 @@ async function monitorSession(callId, env) {
     try {
       const msg = JSON.parse(e.data);
       const t = msg.type || "";
-      if (t.startsWith("response.audio") || t.startsWith("conversation.item")) {
-        console.log(`WS evt call_id=${callId} type=${t}`);
+      if (
+        t.startsWith("response.audio") ||
+        t.startsWith("conversation.item") ||
+        t.includes("transcription") ||
+        t.startsWith("input_audio")
+      ) {
+        console.log(`WS evt call_id=${callId} type=${t} ${JSON.stringify(msg).slice(0, 300)}`);
       } else if (t === "error") {
         console.error(`WS error evt: ${JSON.stringify(msg).slice(0, 500)}`);
       }

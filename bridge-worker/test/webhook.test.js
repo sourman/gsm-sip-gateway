@@ -182,6 +182,19 @@ describe("worker fetch /twiml", () => {
   });
 });
 
+describe("worker fetch /outbound-test", () => {
+  it("plays the sample MP3 on the PSTN leg", async () => {
+    const res = await worker.fetch(
+      new Request("https://sip-webhook.loom.li/outbound-test"),
+      {},
+      { waitUntil() {} },
+    );
+    expect(res.status).toBe(200);
+    const xml = await res.text();
+    expect(xml).toContain("<Play>https://sip-webhook.loom.li/sample-speech-1m.mp3</Play>");
+  });
+});
+
 describe("worker fetch POST /", () => {
   it("returns 400 when a valid-signed event has data.id but no call_id", async () => {
     const env = {
