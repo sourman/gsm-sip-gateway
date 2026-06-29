@@ -1282,12 +1282,12 @@ class RtpSession(
         }
     }
 
-    private fun hasIncallCaptureDlRoute(): Boolean =
-        profile.mixer.mixerSetupCmd.contains("Incall Capture Stream0' DL")
+    private fun hasIncallCaptureRoute(): Boolean =
+        profile.mixer.mixerSetupCmd.contains("Incall Capture Stream0'")
 
     /** Wait for async mixer setup before opening VOICE_CALL capture. */
     private fun waitForCaptureWarmup() {
-        if (!hasIncallCaptureDlRoute()) return
+        if (!hasIncallCaptureRoute()) return
         val warmupAfterMixerMs = 750L
         val mixerDone = GsmCallManager.mixerSetupCompletedAtMs
         val targetStart = if (mixerDone > 0) {
@@ -1305,7 +1305,7 @@ class RtpSession(
 
     /** One-shot tinycap probe on audio_incall_cap PCM (Pixel 7 HAL diagnostics). */
     private fun probeIncallCaptureHalOnce() {
-        if (!hasIncallCaptureDlRoute()) return
+        if (!hasIncallCaptureRoute()) return
         try {
             val cmd = buildString {
                 append("if [ ! -x /data/local/tmp/tinycap ]; then echo 'tinycap not found'; exit 0; fi; ")
@@ -1341,11 +1341,11 @@ class RtpSession(
         }
     }
 
-    /** Re-assert modem downlink routing into incall capture (HAL may reset mid-call). */
+    /** Re-assert modem routing into incall capture (HAL may reset mid-call). */
     private fun reAssertCaptureRoute() {
-        if (!hasIncallCaptureDlRoute()) return
+        if (!hasIncallCaptureRoute()) return
         val resolved = DeviceProfile.resolveCmd(
-            "tinymix 'Incall Capture Stream0' DL 2>/dev/null"
+            "tinymix 'Incall Capture Stream0' UL_DL 2>/dev/null"
         )
         if (resolved.isEmpty()) return
         try {

@@ -222,7 +222,8 @@ async function monitorSession(callId, env) {
     resp = await fetch(wsUrl, {
       headers: {
         Upgrade: "websocket",
-        Authorization: `Bearer ${apiKey}`,
+        // Workers cannot set Authorization on WebSocket upgrade — use subprotocol.
+        "Sec-WebSocket-Protocol": `openai-insecure-api-key.${apiKey}, openai-beta.realtime-v1`,
       },
     });
   } catch (err) {
@@ -240,58 +241,41 @@ async function monitorSession(callId, env) {
 
   const ws = resp.webSocket;
   ws.accept();
+  console.log(`WS open call_id=${callId}`);
 
-  return new Promise((resolve) => {
-    let settled = false;
-    const done = (reason) => {
-      if (settled) return;
-      settled = true;
-      console.log(`WS monitor done call_id=${callId} reason=${reason}`);
-      resolve();
-    };
-
-    const watchdog = setTimeout(() => {
-      try { ws.close(); } catch (_) {}
-      done("watchdog-120s");
-    }, 120_000);
-
-    ws.addEventListener("open", () => {
-      console.log(`WS open call_id=${callId}`);
-      ws.send(JSON.stringify({
-        type: "response.create",
-        response: { instructions: `Say to the user: ${GREETING}` },
-      }));
-    });
-
-    ws.addEventListener("message", (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        const t = msg.type || "";
-        if (
-          t.startsWith("response.audio") ||
-          t.startsWith("conversation.item") ||
-          t.includes("transcription") ||
-          t.startsWith("input_audio") ||
-          t === "session.updated" ||
-          t === "session.created"
-        ) {
-          console.log(`WS evt call_id=${callId} type=${t} ${JSON.stringify(msg).slice(0, 500)}`);
-        } else if (t === "error") {
-          console.error(`WS error evt: ${JSON.stringify(msg).slice(0, 500)}`);
-        }
-      } catch (_) {}
-    });
-
-    ws.addEventListener("error", (e) => {
-      console.error(`WS error call_id=${callId}: ${e?.message || "unknown"}`);
-    });
-
-    ws.addEventListener("close", (e) => {
-      clearTimeout(watchdog);
-      console.log(`WS closed call_id=${callId} code=${e.code} reason=${e.reason}`);
-      done(`close-${e.code}`);
-    });
+  // Handlers only — do not block waitUntil for the full call. Accepted
+  // WebSockets outlive the fetch handler on Workers.
+  ws.addEventListener("message", (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      const t = msg.type || "";
+      if (
+        t.startsWith("response.audio") ||
+        t.startsWith("conversation.item") ||
+        t.includes("transcription") ||
+        t.startsWith("input_audio") ||
+        t === "session.updated" ||
+        t === "session.created"
+      ) {
+        console.log(`WS evt call_id=${callId} type=${t} ${JSON.stringify(msg).slice(0, 500)}`);
+      } else if (t === "error") {
+        console.error(`WS error evt: ${JSON.stringify(msg).slice(0, 500)}`);
+      }
+    } catch (_) {}
   });
+
+  ws.addEventListener("error", (e) => {
+    console.error(`WS error call_id=${callId}: ${e?.message || "unknown"}`);
+  });
+
+  ws.addEventListener("close", (e) => {
+    console.log(`WS closed call_id=${callId} code=${e.code} reason=${e.reason}`);
+  });
+
+  ws.send(JSON.stringify({
+    type: "response.create",
+    response: { instructions: `Say to the user: ${GREETING}` },
+  }));
 }
 
 async function verifyWebhook(rawBody, headers, secret) {
