@@ -105,13 +105,15 @@ Copy `.env.example` → `.env` and fill SignalWire fields. **Quote values that c
 
 Run `./scripts/signalwire/check-auth.sh` — expects all vars set and `auth: ok (HTTP 200)` on `GET /api/relay/rest/domain_applications`.
 
-**SignalWire space exploration (read-only):**
+**SignalWire space (live):**
 
-| Resource | Count |
-|----------|-------|
-| Domain Applications | 0 (create in dashboard — see below) |
+| Resource | Status |
+|----------|--------|
+| Domain Application `gsm-gateway` | **created** — `loomli-gsm-gateway.dapp.signalwire.com` |
 | SIP endpoints | 0 |
-| Phone numbers | 0 |
+| Phone numbers | 0 (not purchased) |
+
+**SIP domain vs SWML webhook:** The gateway registers/calls to SignalWire's **assigned** Domain App FQDN (`*.dapp.signalwire.com`). The SWML handler URL (`https://sip-webhook.loom.li/swml`) is only where SignalWire fetches call logic — not a custom SIP domain and not entered in the gateway app.
 
 ### Worker route (deployed)
 
@@ -122,35 +124,91 @@ Run `./scripts/signalwire/check-auth.sh` — expects all vars set and `auth: ok 
 
 SignalWire Domain Apps fetch SWML via **POST**; GET is for manual `curl` checks.
 
-## SignalWire dashboard steps (besides API token)
+## Create Domain App via CLI (preferred)
+
+`swsh` can list/create Domain Apps but **does not expose `relay_script` (SWML)** — use the REST API helper instead.
+
+```bash
+# One-time: ensure .env has SIGNALWIRE_SPACE, SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_KEY
+./scripts/signalwire/check-auth.sh
+
+# Optional: whitelist gateway public IP (else script uses 0.0.0.0/0 temporarily)
+export GATEWAY_PUBLIC_IP="$(adb -s <serial> shell wget -qO- ifconfig.me 2>/dev/null || true)"
+
+./scripts/signalwire/create-domain-app.sh   # idempotent — skips if identifier exists
+./scripts/signalwire/list-domain-apps.sh    # confirm FQDN + handler
+```
+
+**REST payload** (what the script sends):
+
+```json
+{
+  "name": "GSM SIP Gateway",
+  "identifier": "gsm-gateway",
+  "ip_auth_enabled": true,
+  "ip_auth": ["<gateway-public-ip>/32"],
+  "encryption": "optional",
+  "call_handler": "relay_script",
+  "call_relay_script_url": "https://sip-webhook.loom.li/swml"
+}
+```
+
+Endpoint: `POST https://<SIGNALWIRE_SPACE>.signalwire.com/api/relay/rest/domain_applications` with Basic auth `PROJECT_ID:REST_API_TOKEN`.
+
+**Response fields to note:**
+
+| Field | Example | Use |
+|-------|---------|-----|
+| `domain` | `loomli-gsm-gateway` | Short name — append `.dapp.signalwire.com` for SIP server |
+| `id` | UUID | Optional: `SIGNALWIRE_DOMAIN_APP_ID` in `.env` |
+| `user` | `*` | Wildcard SIP user — **IP auth is primary** for Domain Apps |
+| SIP password | *(not in API)* | Not returned by create/list; Domain Apps use IP whitelist. If digest auth is challenged, check Dashboard → SIP → Domain Apps |
+
+**swsh (read/update only for SWML apps):**
+
+```bash
+./scripts/signalwire/swsh-wrap.sh "domain_application list"
+./scripts/signalwire/swsh-wrap.sh "domain_application create --help"   # no relay_script option
+```
+
+To tighten IP whitelist after testing:
+
+```bash
+curl -sS -u "$PROJECT_ID:$REST_API_TOKEN" -H 'Content-Type: application/json' \
+  -X PATCH "https://${SIGNALWIRE_SPACE}.signalwire.com/api/relay/rest/domain_applications/${SIGNALWIRE_DOMAIN_APP_ID}" \
+  -d '{"ip_auth":["<gateway-ip>/32"]}'
+```
+
+## SignalWire dashboard steps (if not using CLI)
 
 1. **API tab** — copy **Space** subdomain, **Project ID**, and create a **REST API token** with voice/SIP scopes as needed.
 2. **SIP → Domain Apps → Create** — inbound BYOC domain for the gateway.
    - Whitelist the gateway's public IP (or disable open routing).
    - **Handle using:** SWML Script.
-   - **When a call comes in:** `https://sip-webhook.loom.li/swml` (Worker-hosted; accepts GET or POST).
-3. **SIP credentials** — note username/password and domain FQDN for the gateway app.
+   - **When a call comes in:** `https://sip-webhook.loom.li/swml` (Worker-hosted; SignalWire fetches via POST).
+3. **SIP credentials** — Domain Apps authenticate primarily by **IP whitelist** (`user: *`). No password is returned by the API; use dashboard only if digest auth is required.
 4. **(Optional) Phone number** — only if PSTN outbound tests like Twilio `/outbound-test` are needed; purchasing incurs cost.
 5. **OpenAI** — confirm SIP webhook still targets `sip-webhook.loom.li` and project ID matches SWML `connect` URI.
 
 ## Gateway app SIP settings
 
-After creating a **SIP Domain Application** in the SignalWire dashboard, enter these in the gateway app (Settings → SIP):
+Point the gateway at SignalWire's **assigned Domain App FQDN** (not `loom.li` — that URL is only the SWML webhook):
 
 | Field | Value |
 |-------|-------|
-| Server / domain | Domain App FQDN from dashboard, e.g. `yourapp.dapp.signalwire.com` |
-| Username | SIP username from the Domain App endpoint |
-| Password | SIP password from the Domain App endpoint |
-| Transport | TLS (match Domain App requirements) |
+| Server / domain | `loomli-gsm-gateway.dapp.signalwire.com` (from API `domain` + `.dapp.signalwire.com`) |
+| Port | `5060` |
+| Username | `gateway` (any value when Domain App `user` is `*`) |
+| Password | Leave empty unless SignalWire returns `401/407` on REGISTER — then check Dashboard → SIP → Domain Apps |
+| Transport | UDP (`encryption: optional` on Domain App; gateway `SipClient` is UDP-only) |
 
-**SWML script URL** (Domain App → Handle using → SWML Script):
+**SWML script URL** (configured on Domain App, not in gateway app):
 
 ```
 https://sip-webhook.loom.li/swml
 ```
 
-Whitelist the gateway phone's public IP on the Domain App if open routing is disabled.
+Tighten IP whitelist from `0.0.0.0/0` to the gateway phone's public IP once known (`GATEWAY_PUBLIC_IP` in create script, or PATCH via REST).
 
 The gateway is SIP-agnostic (`CLAUDE.md`); no app code changes required for peer swap.
 
@@ -166,6 +224,8 @@ uv pip install swsh
 # Helpers
 chmod +x scripts/signalwire/*.sh
 ./scripts/signalwire/check-auth.sh          # env + REST probe
+./scripts/signalwire/create-domain-app.sh   # create/list Domain App (REST; SWML handler)
+./scripts/signalwire/list-domain-apps.sh    # JSON summary of Domain Apps
 ./scripts/signalwire/swsh-wrap.sh "help"    # swsh via venv + .env mapping
 ```
 
@@ -204,8 +264,8 @@ No changes to `POST /` OpenAI webhook handler.
 ## Next migration steps
 
 1. ~~Add `SIGNALWIRE_SPACE` and `SIGNALWIRE_PROJECT_ID` to `.env`~~ — done; `./scripts/signalwire/check-auth.sh` reports `auth: ok`.
-2. **Create Domain App** in SignalWire dashboard (see [dashboard steps](#signalwire-dashboard-steps-besides-api-token)) pointing SWML URL at `https://sip-webhook.loom.li/swml`.
-3. Point gateway SIP settings at the Domain App FQDN + credentials.
+2. ~~**Create Domain App**~~ — done via `./scripts/signalwire/create-domain-app.sh` → `loomli-gsm-gateway.dapp.signalwire.com`, SWML → `https://sip-webhook.loom.li/swml`.
+3. Point gateway SIP settings at the Domain App FQDN (see [Gateway app SIP settings](#gateway-app-sip-settings)); tighten IP whitelist from `0.0.0.0/0`.
 4. Place test call; verify `realtime.call.incoming` in `wrangler tail` and RTP-STATS on device.
 5. Add `scripts/signalwire/download-recording.sh` (SignalWire recording API) as Twilio script parallel.
 6. Retire Twilio trunk only after SignalWire path matches recording + bidirectional audio evidence.
