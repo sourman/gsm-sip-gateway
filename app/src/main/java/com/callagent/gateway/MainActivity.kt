@@ -323,7 +323,6 @@ class MainActivity : AppCompatActivity(), GatewayHost {
     }
 
     private fun autoStartGateway() {
-        if (running) return
         val prefs = getSharedPreferences("gateway", MODE_PRIVATE)
         if (!prefs.getBoolean("autoconnect", true)) return
         val server = prefs.getString("server", "") ?: ""
@@ -332,10 +331,19 @@ class MainActivity : AppCompatActivity(), GatewayHost {
         val port = prefs.getInt("port", 5060)
         val pass = prefs.getString("pass", "") ?: ""
         val localServer = prefs.getBoolean("local_server", false)
-        GatewayService.start(this, server, port, user, pass, localServer)
-        running = true
-        vm.setGatewayRunning(running)
-        vm.appendLog("Auto-starting gateway: $user@$server:$port")
+        if (running) {
+            // Gateway was started from background (BootReceiver). Re-launch the
+            // FGS from this foreground activity so the microphone capability bit
+            // sticks for the FGS process lifetime — un-silences VOICE_CALL
+            // capture in background. Safe because the app is foreground here.
+            GatewayService.relaunchFromForeground(this, server, port, user, pass, localServer)
+            vm.appendLog("Re-launching gateway from foreground (mic capability)")
+        } else {
+            GatewayService.start(this, server, port, user, pass, localServer)
+            running = true
+            vm.setGatewayRunning(running)
+            vm.appendLog("Auto-starting gateway: $user@$server:$port")
+        }
     }
 
     // ── Tab Navigation ───────────────────────────────────
