@@ -25,13 +25,19 @@ const worker = {
 
     // TwiML for outbound PSTN test: Twilio dials the gateway SIM and plays a
     // known MP3 on the PSTN leg so we can verify Twilio → GSM → SIP → OpenAI.
+    //
+    // Trial accounts: webhook URLs are proxied through Twilio's sanitizer, which
+    // plays a disclaimer then "press any key to execute your code" before fetching
+    // this TwiML. Without a keypress the call times out (~13s) and <Play> never runs.
+    // Workarounds: pass inline TwiML via `twilio api:core:calls:create --twiml=...`,
+    // use Twilio's voice_play_audio template URL, or upgrade the account.
     if (request.method === "GET" && url.pathname === "/outbound-test") {
-      const mp3 = `https://${url.host}/sample-speech-1m.mp3`;
+      const mp3 = "https://demo.twilio.com/docs/classic.mp3";
       const twiml =
         `<?xml version="1.0" encoding="UTF-8"?>\n` +
         `<Response>\n` +
         `  <Play>${mp3}</Play>\n` +
-        `  <Pause length="5"/>\n` +
+        `  <Pause length="30"/>\n` +
         `</Response>`;
       return new Response(twiml, {
         status: 200,
@@ -72,7 +78,7 @@ const worker = {
       const callSid = form.get("CallSid");
       const duration = form.get("RecordingDuration");
       console.log(`Recording ready CallSid=${callSid} dur=${duration}s url=${recUrl}`);
-      return new Response("", { status: 204 });
+      return new Response(null, { status: 204 });
     }
 
     // OpenAI realtime.call.incoming webhook handler below.
@@ -120,16 +126,21 @@ const worker = {
       model: env.REALTIME_MODEL || "gpt-realtime-2",
       instructions: INSTRUCTIONS,
       audio: {
+        input: {
+          transcription: { model: "gpt-4o-mini-transcribe" },
+        },
         output: { voice: env.REALTIME_VOICE || "alloy" },
       },
     };
+
+    const apiKey = env.OPENAI_API_KEY.trim();
 
     const acceptResp = await fetch(
       `https://api.openai.com/v1/realtime/calls/${encodeURIComponent(callId)}/accept`,
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+          Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(acceptBody),
@@ -143,60 +154,91 @@ const worker = {
     }
 
     console.log(`Accepted call_id=${callId}; attaching monitor WebSocket in 1s`);
-    ctx.waitUntil(monitorSession(callId, env));
+    ctx.waitUntil(monitorSession(callId, { ...env, OPENAI_API_KEY: apiKey }));
 
     return new Response("", { status: 200 });
   },
 };
 
 async function monitorSession(callId, env) {
-  await new Promise((r) => setTimeout(r, 1000));
-  const wsUrl = `wss://api.openai.com/v1/realtime?call_id=${encodeURIComponent(callId)}`;
-  let ws;
+  await new Promise((r) => setTimeout(r, 250));
+  const wsUrl = `https://api.openai.com/v1/realtime?call_id=${encodeURIComponent(callId)}`;
+  const apiKey = env.OPENAI_API_KEY.trim();
+
+  let resp;
   try {
-    ws = new WebSocket(wsUrl, [
-      "realtime",
-      "openai-insecure-api-key." + env.OPENAI_API_KEY,
-      "openai-beta.realtime-v1",
-    ]);
+    resp = await fetch(wsUrl, {
+      headers: {
+        Upgrade: "websocket",
+        Authorization: `Bearer ${apiKey}`,
+      },
+    });
   } catch (err) {
-    console.error("WebSocket ctor failed:", err.message);
+    console.error(`WS fetch failed call_id=${callId}:`, err.message);
     return;
   }
 
-  let greeted = false;
-  ws.addEventListener("open", () => {
-    console.log(`WS open call_id=${callId}`);
-    ws.send(JSON.stringify({
-      type: "response.create",
-      response: { instructions: `Say to the user: ${GREETING}` },
-    }));
-    greeted = true;
-  });
+  if (resp.status !== 101 || !resp.webSocket) {
+    const body = await resp.text().catch(() => "");
+    console.error(
+      `WS upgrade failed call_id=${callId} status=${resp.status} body=${body.slice(0, 200)}`,
+    );
+    return;
+  }
 
-  ws.addEventListener("message", (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      const t = msg.type || "";
-      if (
-        t.startsWith("response.audio") ||
-        t.startsWith("conversation.item") ||
-        t.includes("transcription") ||
-        t.startsWith("input_audio")
-      ) {
-        console.log(`WS evt call_id=${callId} type=${t} ${JSON.stringify(msg).slice(0, 300)}`);
-      } else if (t === "error") {
-        console.error(`WS error evt: ${JSON.stringify(msg).slice(0, 500)}`);
-      }
-    } catch (_) {}
-  });
+  const ws = resp.webSocket;
+  ws.accept();
 
-  ws.addEventListener("error", (e) => {
-    console.error(`WS error call_id=${callId}: ${e?.message || "unknown"}`);
-  });
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (reason) => {
+      if (settled) return;
+      settled = true;
+      console.log(`WS monitor done call_id=${callId} reason=${reason}`);
+      resolve();
+    };
 
-  ws.addEventListener("close", (e) => {
-    console.log(`WS closed call_id=${callId} code=${e.code} reason=${e.reason}`);
+    const watchdog = setTimeout(() => {
+      try { ws.close(); } catch (_) {}
+      done("watchdog-120s");
+    }, 120_000);
+
+    ws.addEventListener("open", () => {
+      console.log(`WS open call_id=${callId}`);
+      ws.send(JSON.stringify({
+        type: "response.create",
+        response: { instructions: `Say to the user: ${GREETING}` },
+      }));
+    });
+
+    ws.addEventListener("message", (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        const t = msg.type || "";
+        if (
+          t.startsWith("response.audio") ||
+          t.startsWith("conversation.item") ||
+          t.includes("transcription") ||
+          t.startsWith("input_audio") ||
+          t === "session.updated" ||
+          t === "session.created"
+        ) {
+          console.log(`WS evt call_id=${callId} type=${t} ${JSON.stringify(msg).slice(0, 500)}`);
+        } else if (t === "error") {
+          console.error(`WS error evt: ${JSON.stringify(msg).slice(0, 500)}`);
+        }
+      } catch (_) {}
+    });
+
+    ws.addEventListener("error", (e) => {
+      console.error(`WS error call_id=${callId}: ${e?.message || "unknown"}`);
+    });
+
+    ws.addEventListener("close", (e) => {
+      clearTimeout(watchdog);
+      console.log(`WS closed call_id=${callId} code=${e.code} reason=${e.reason}`);
+      done(`close-${e.code}`);
+    });
   });
 }
 

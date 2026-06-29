@@ -40,8 +40,9 @@ function headers({ webhookId, timestamp, signature }) {
   });
 }
 
-const SECRET = "whsec_/GMe2zzMV1OsHboJBskabWwNxm/4hWvD4+71uV43MUw=";
-const ALT_SECRET = "whsec_ZrfF8n3I5pJqLc0T1uWgX9oYyVd9E5dRm4nB7xP2sQc=";
+// Synthetic test-only secrets — never use production whsec_ values here.
+const SECRET = "whsec_dGVzdC13ZWJob29rLXNlY3JldC1rZXktMDEyMzQ1Njc4OTA=";
+const ALT_SECRET = "whsec_YWx0ZXJuYXRlLXRlc3Qtc2VjcmV0LWtleS0wOTg3NjU0MzIx";
 const BODY = JSON.stringify({
   type: "realtime.call.incoming",
   data: { id: "call_abc", call_id: "call_abc", sip_headers: [] },
@@ -191,7 +192,7 @@ describe("worker fetch /outbound-test", () => {
     );
     expect(res.status).toBe(200);
     const xml = await res.text();
-    expect(xml).toContain("<Play>https://sip-webhook.loom.li/sample-speech-1m.mp3</Play>");
+    expect(xml).toContain("<Play>https://demo.twilio.com/docs/classic.mp3</Play>");
   });
 });
 
