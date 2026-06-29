@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
+import com.callagent.gateway.MicCapabilityGuard
 import com.callagent.gateway.RootShell
 
 /**
@@ -38,10 +39,23 @@ class BootReceiver : BroadcastReceiver() {
             val user = prefs.getString("user", "") ?: ""
 
             if (server.isNotEmpty() && user.isNotEmpty()) {
-                Log.i(TAG, "Config found, starting gateway service")
-                val port = prefs.getInt("port", 5060)
-                val pass = prefs.getString("pass", "") ?: ""
-                GatewayService.start(context, server, port, user, pass)
+                Log.i(TAG, "Config found, starting gateway from foreground trampoline")
+                Thread({
+                    try {
+                        RootShell.init()
+                        if (!MicCapabilityGuard.launchRelaunchActivity(context.packageName)) {
+                            Log.w(TAG, "Root relaunch failed, falling back to direct service start")
+                            val port = prefs.getInt("port", 5060)
+                            val pass = prefs.getString("pass", "") ?: ""
+                            GatewayService.start(context, server, port, user, pass)
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Foreground relaunch failed: ${e.message}")
+                        val port = prefs.getInt("port", 5060)
+                        val pass = prefs.getString("pass", "") ?: ""
+                        GatewayService.start(context, server, port, user, pass)
+                    }
+                }, "boot-relaunch").start()
             } else {
                 Log.i(TAG, "No config, skipping auto-start")
             }

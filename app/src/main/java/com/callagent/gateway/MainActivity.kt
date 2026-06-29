@@ -238,6 +238,11 @@ class MainActivity : AppCompatActivity(), GatewayHost {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent.getBooleanExtra(EXTRA_MIC_CAPABILITY_RELAUNCH, false)) {
+            relaunchGatewayForMicCapability()
+            finish()
+            return
+        }
         setContentView(R.layout.activity_main)
 
         vm = ViewModelProvider(this).get(GatewayViewModel::class.java)
@@ -322,7 +327,17 @@ class MainActivity : AppCompatActivity(), GatewayHost {
         }
     }
 
-    private fun autoStartGateway() {
+    private fun isGatewayServiceRunning(): Boolean {
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        @Suppress("DEPRECATION")
+        for (info in am.getRunningServices(Int.MAX_VALUE)) {
+            if (info.service.className == GatewayService::class.java.name) return true
+        }
+        return false
+    }
+
+    /** Re-establish FGS from foreground so FOREGROUND_MICROPHONE capability sticks. */
+    private fun relaunchGatewayForMicCapability() {
         val prefs = getSharedPreferences("gateway", MODE_PRIVATE)
         if (!prefs.getBoolean("autoconnect", true)) return
         val server = prefs.getString("server", "") ?: ""
@@ -331,18 +346,27 @@ class MainActivity : AppCompatActivity(), GatewayHost {
         val port = prefs.getInt("port", 5060)
         val pass = prefs.getString("pass", "") ?: ""
         val localServer = prefs.getBoolean("local_server", false)
-        if (running) {
-            // Gateway was started from background (BootReceiver). Re-launch the
-            // FGS from this foreground activity so the microphone capability bit
-            // sticks for the FGS process lifetime — un-silences VOICE_CALL
-            // capture in background. Safe because the app is foreground here.
+        if (running || isGatewayServiceRunning()) {
             GatewayService.relaunchFromForeground(this, server, port, user, pass, localServer)
-            vm.appendLog("Re-launching gateway from foreground (mic capability)")
         } else {
             GatewayService.start(this, server, port, user, pass, localServer)
+        }
+    }
+
+    private fun autoStartGateway() {
+        val prefs = getSharedPreferences("gateway", MODE_PRIVATE)
+        if (!prefs.getBoolean("autoconnect", true)) return
+        val server = prefs.getString("server", "") ?: ""
+        val user = prefs.getString("user", "") ?: ""
+        if (server.isEmpty() || user.isEmpty()) return
+        val wasRunning = running || isGatewayServiceRunning()
+        relaunchGatewayForMicCapability()
+        if (!wasRunning) {
             running = true
             vm.setGatewayRunning(running)
-            vm.appendLog("Auto-starting gateway: $user@$server:$port")
+            vm.appendLog("Auto-starting gateway: $user@$server:${prefs.getInt("port", 5060)}")
+        } else {
+            vm.appendLog("Re-launching gateway from foreground (mic capability)")
         }
     }
 
@@ -690,6 +714,7 @@ class MainActivity : AppCompatActivity(), GatewayHost {
     companion object {
         private const val REQ_PERMS = 100
         private const val REQ_DEFAULT_DIALER = 101
+        const val EXTRA_MIC_CAPABILITY_RELAUNCH = "mic_capability_relaunch"
     }
 }
 

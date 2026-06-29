@@ -20,6 +20,7 @@ import android.util.Log
 import com.callagent.gateway.BuildConfig
 import com.callagent.gateway.GatewayApp
 import com.callagent.gateway.MainActivity
+import com.callagent.gateway.MicCapabilityGuard
 import com.callagent.gateway.R
 import com.callagent.gateway.RootShell
 import com.callagent.gateway.bridge.CallOrchestrator
@@ -135,6 +136,11 @@ class GatewayService : Service() {
         }
     }
 
+    private fun isCallActive(): Boolean {
+        val state = orchestrator?.bridgeState ?: return false
+        return state != CallOrchestrator.BridgeState.IDLE
+    }
+
     private fun reconnect() {
         if (stopped || cfgServer.isEmpty()) return
         if (!initializing.compareAndSet(false, true)) {
@@ -227,6 +233,14 @@ class GatewayService : Service() {
 
         if (forceRestart && sipClient != null) {
             Log.i(TAG, "startGateway: force restart from foreground (re-establishing mic capability)")
+        }
+
+        if (!forceRestart && intent?.getBooleanExtra(EXTRA_FROM_FOREGROUND, false) != true) {
+            MicCapabilityGuard.startMonitor(this) { isCallActive() }
+            if (MicCapabilityGuard.requestRelaunchIfNeeded(this, "service-start", inCall = isCallActive())) {
+                Log.i(TAG, "startGateway: deferred — foreground relaunch in progress")
+                return
+            }
         }
 
         // Clean up any existing client before starting a new one
@@ -694,6 +708,7 @@ class GatewayService : Service() {
         const val EXTRA_USER = "user"
         const val EXTRA_PASS = "pass"
         const val EXTRA_LOCAL_SERVER = "local_server"
+        const val EXTRA_FROM_FOREGROUND = "from_foreground"
         const val EXTRA_NUMBER = "number"
         const val STATUS_ACTION = "com.callagent.gateway.STATUS"
         const val LOG_ACTION = "com.callagent.gateway.LOG"
@@ -706,6 +721,7 @@ class GatewayService : Service() {
                 putExtra(EXTRA_USER, user)
                 putExtra(EXTRA_PASS, pass)
                 putExtra(EXTRA_LOCAL_SERVER, localServer)
+                putExtra(EXTRA_FROM_FOREGROUND, true)
             }
             context.startForegroundService(intent)
         }
