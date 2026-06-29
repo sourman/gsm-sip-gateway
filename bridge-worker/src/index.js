@@ -15,12 +15,26 @@ const INSTRUCTIONS =
 
 const GREETING = "Hello! This is the OpenAI Realtime test endpoint. Go ahead, I'm listening.";
 
+/** Latest accepted OpenAI call_id — for e2e harness (GET /last-call-id). */
+let lastCallId = null;
+let lastCallAcceptedAt = 0;
+
 const worker = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/health") {
       return new Response("ok\n", { status: 200 });
+    }
+
+    if (request.method === "GET" && url.pathname === "/last-call-id") {
+      if (!lastCallId) {
+        return new Response("no call yet\n", { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({ call_id: lastCallId, accepted_at: lastCallAcceptedAt }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
     }
 
     // TwiML for outbound PSTN test: Twilio dials the gateway SIM and plays a
@@ -184,8 +198,10 @@ const worker = {
       return new Response("Accept failed", { status: 502 });
     }
 
-    console.log(`Accepted call_id=${callId}; attaching monitor WebSocket in 1s`);
-    ctx.waitUntil(monitorSession(callId, { ...env, OPENAI_API_KEY: apiKey }));
+    lastCallId = callId;
+    lastCallAcceptedAt = Date.now();
+    console.log(`Accepted call_id=${callId}; attaching sideband monitor`);
+    ctx.waitUntil(notifySidebandMonitor(callId, env));
 
     return new Response("", { status: 200 });
   },
@@ -212,70 +228,28 @@ function swmlBridgeResponse(env) {
   });
 }
 
-async function monitorSession(callId, env) {
-  await new Promise((r) => setTimeout(r, 250));
-  const wsUrl = `https://api.openai.com/v1/realtime?call_id=${encodeURIComponent(callId)}`;
-  const apiKey = env.OPENAI_API_KEY.trim();
-
-  let resp;
+async function notifySidebandMonitor(callId, env) {
+  const base = env.SIDEBAND_MONITOR_URL;
+  if (!base) {
+    console.warn(`No SIDEBAND_MONITOR_URL — sideband WS skipped call_id=${callId}`);
+    return;
+  }
+  const url = base.endsWith("/attach") ? base : `${base.replace(/\/$/, "")}/attach`;
   try {
-    resp = await fetch(wsUrl, {
-      headers: {
-        Upgrade: "websocket",
-        // Workers cannot set Authorization on WebSocket upgrade — use subprotocol.
-        "Sec-WebSocket-Protocol": `openai-insecure-api-key.${apiKey}, openai-beta.realtime-v1`,
-      },
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ call_id: callId }),
     });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      console.error(`Sideband notify failed ${resp.status}: ${text.slice(0, 200)}`);
+    } else {
+      console.log(`Sideband notify ok call_id=${callId}`);
+    }
   } catch (err) {
-    console.error(`WS fetch failed call_id=${callId}:`, err.message);
-    return;
+    console.error(`Sideband notify error call_id=${callId}:`, err.message);
   }
-
-  if (resp.status !== 101 || !resp.webSocket) {
-    const body = await resp.text().catch(() => "");
-    console.error(
-      `WS upgrade failed call_id=${callId} status=${resp.status} body=${body.slice(0, 200)}`,
-    );
-    return;
-  }
-
-  const ws = resp.webSocket;
-  ws.accept();
-  console.log(`WS open call_id=${callId}`);
-
-  // Handlers only — do not block waitUntil for the full call. Accepted
-  // WebSockets outlive the fetch handler on Workers.
-  ws.addEventListener("message", (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      const t = msg.type || "";
-      if (
-        t.startsWith("response.audio") ||
-        t.startsWith("conversation.item") ||
-        t.includes("transcription") ||
-        t.startsWith("input_audio") ||
-        t === "session.updated" ||
-        t === "session.created"
-      ) {
-        console.log(`WS evt call_id=${callId} type=${t} ${JSON.stringify(msg).slice(0, 500)}`);
-      } else if (t === "error") {
-        console.error(`WS error evt: ${JSON.stringify(msg).slice(0, 500)}`);
-      }
-    } catch (_) {}
-  });
-
-  ws.addEventListener("error", (e) => {
-    console.error(`WS error call_id=${callId}: ${e?.message || "unknown"}`);
-  });
-
-  ws.addEventListener("close", (e) => {
-    console.log(`WS closed call_id=${callId} code=${e.code} reason=${e.reason}`);
-  });
-
-  ws.send(JSON.stringify({
-    type: "response.create",
-    response: { instructions: `Say to the user: ${GREETING}` },
-  }));
 }
 
 async function verifyWebhook(rawBody, headers, secret) {

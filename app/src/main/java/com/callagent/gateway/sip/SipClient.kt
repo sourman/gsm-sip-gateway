@@ -525,10 +525,13 @@ class SipClient(
                         // Exponential backoff: 10s, 20s, 40s, cap at 60s
                         Thread.sleep(reregBackoff)
                         reregBackoff = (reregBackoff * 2).coerceAtMost(60_000L)
-                        // After repeated failures, signal that we need a full reconnect
-                        if (reregBackoff >= 60_000L) {
+                        // After repeated failures, signal reconnect — but never while
+                        // an INVITE dialog is active (reconnect kills the bridge).
+                        if (reregBackoff >= 60_000L && activeCalls.isEmpty()) {
                             uiLog("Registration failed repeatedly, requesting reconnect")
                             onConnectionLost?.invoke()
+                        } else if (reregBackoff >= 60_000L) {
+                            uiLog("Registration failed but call active — deferring reconnect")
                         }
                         continue
                     }
@@ -544,9 +547,14 @@ class SipClient(
                     } else if (registered && System.currentTimeMillis() - lastServerResponseTime > 60_000) {
                         keepaliveFailures++
                         if (keepaliveFailures >= maxKeepaliveFailures) {
-                            uiLog("Keepalive failed $keepaliveFailures times, connection lost")
-                            registered = false
-                            onConnectionLost?.invoke()
+                            if (activeCalls.isNotEmpty()) {
+                                uiLog("Keepalive failed but call active — deferring reconnect")
+                                keepaliveFailures = 0
+                            } else {
+                                uiLog("Keepalive failed $keepaliveFailures times, connection lost")
+                                registered = false
+                                onConnectionLost?.invoke()
+                            }
                             continue
                         }
                     } else {

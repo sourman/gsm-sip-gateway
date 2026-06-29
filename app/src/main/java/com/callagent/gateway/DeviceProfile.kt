@@ -523,7 +523,7 @@ data class DeviceProfile(
                     // Without this the AOC DSP routes nothing into audio_incall_cap_0
                     // and AudioRecord(VOICE_CALL) reads all-zero PCM (the "silence" bug).
                     // ENUM values: Off / UL / DL / UL_DL / 3MIC. DL = downlink only.
-                    append("tinymix 'Incall Capture Stream0' UL_DL 2>/dev/null; ")
+                    append("tinymix 'Incall Capture Stream0' DL 2>/dev/null; ")
                     // Enable INCALL playback stream (opens modem TX path)
                     append("tinymix 'Incall Playback Stream0' 1 2>/dev/null; ")
                     // Route EP6 TX to INCALL_TX (EP6 = deep-buffer-playback from mixer_paths.xml)
@@ -555,6 +555,7 @@ data class DeviceProfile(
                 musicVolPercent = 100,
                 captureGain = 4,
                 playbackGain = 2,
+                voiceCallVolPercent = 70,
                 noiseGateThreshold = 15,   // VOICE_DOWNLINK captures very quietly on aoc-snd-card
                 echoGateThreshold = 300,
                 doubleTalkRatio = 1.5f,

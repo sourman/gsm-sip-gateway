@@ -1345,7 +1345,7 @@ class RtpSession(
     private fun reAssertCaptureRoute() {
         if (!hasIncallCaptureRoute()) return
         val resolved = DeviceProfile.resolveCmd(
-            "tinymix 'Incall Capture Stream0' UL_DL 2>/dev/null"
+            "tinymix 'Incall Capture Stream0' DL 2>/dev/null"
         )
         if (resolved.isEmpty()) return
         try {

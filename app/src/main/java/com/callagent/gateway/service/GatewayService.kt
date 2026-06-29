@@ -126,6 +126,7 @@ class GatewayService : Service() {
             it != CallOrchestrator.BridgeState.IDLE
         } ?: false
         if (busy) return
+        if (initializing.get()) return
         val newIp = getLocalIp()
         if (newIp == "0.0.0.0") return
         val ipChanged = newIp != currentLocalIp
@@ -144,6 +145,10 @@ class GatewayService : Service() {
 
     private fun reconnect() {
         if (stopped || cfgServer.isEmpty()) return
+        if (isCallActive()) {
+            Log.i(TAG, "Reconnect skipped — call in progress")
+            return
+        }
         if (!initializing.compareAndSet(false, true)) {
             Log.i(TAG, "Reconnect skipped — already initializing")
             return

@@ -1,6 +1,7 @@
 name = "openai-realtime-sip-webhook"
 main = "src/index.js"
 compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 account_id = "ca4f0959ffdd2d3073edf994b36f7f2d"
 

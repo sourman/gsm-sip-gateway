@@ -165,11 +165,11 @@ class DeviceProfileTest {
     // ── Pixel 7 incall-capture routing (silence-bug fix, aad6124) ──
 
     @Test
-    fun `pixel7 mixer setup routes modem audio into incall capture`() {
+    fun `pixel7 mixer setup routes modem downlink into incall capture`() {
         val setup = DeviceProfile.pixel7Tensor().mixer.mixerSetupCmd
         assertTrue(
-            "setup must set Incall Capture Stream0 to UL_DL",
-            setup.contains("tinymix 'Incall Capture Stream0' UL_DL"),
+            "setup must set Incall Capture Stream0 to DL",
+            setup.contains("tinymix 'Incall Capture Stream0' DL"),
         )
     }
 
