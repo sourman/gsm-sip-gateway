@@ -155,6 +155,51 @@ class DeviceProfileTest {
         assertFullyPopulated(DeviceProfile.generic())
     }
 
+    // ── Pixel 7 incall-capture routing (silence-bug fix, aad6124) ──
+
+    @Test
+    fun `pixel7 mixer setup routes modem downlink into incall capture`() {
+        val setup = DeviceProfile.pixel7Tensor().mixer.mixerSetupCmd
+        assertTrue(
+            "setup must set Incall Capture Stream0 to DL",
+            setup.contains("tinymix 'Incall Capture Stream0' DL"),
+        )
+    }
+
+    @Test
+    fun `pixel7 mixer restore returns incall capture to Off`() {
+        val restore = DeviceProfile.pixel7Tensor().mixer.mixerRestoreCmd
+        assertTrue(
+            "restore must set Incall Capture Stream0 back to Off",
+            restore.contains("tinymix 'Incall Capture Stream0' Off"),
+        )
+    }
+
+    @Test
+    fun `HalRoutingProfile source has no dropped useAlsaIncallCapture flag`() {
+        val source = java.io.File("src/main/java/com/callagent/gateway/DeviceProfile.kt").readText()
+        assertFalse(
+            "native ALSA incall-capture was removed; DeviceProfile.kt must not " +
+                "reintroduce useAlsaIncallCapture",
+            Regex("""\buseAlsaIncallCapture\b""").containsMatchIn(source),
+        )
+    }
+
+    @Test
+    fun `pixel7 sub-object field paths compile`() {
+        // Sanity that the DeviceProfile refactor keeps mixer/audio/routing
+        // reachable. Any flat-field consumer regression (the aad6124 internal
+        // inconsistency where call sites used profile.mixerIncallMusicCmd)
+        // surfaces as a compile error here.
+        val p = DeviceProfile.pixel7Tensor()
+        val mixerCmd: String = p.mixer.mixerIncallMusicCmd
+        val captureGain: Int = p.audio.captureGain
+        val routeDelay: Long = p.routing.routeChangeDelayMs
+        assertTrue(mixerCmd.isNotEmpty())
+        assertTrue(captureGain >= 0)
+        assertTrue(routeDelay >= 0)
+    }
+
     private fun assertFullyPopulated(p: DeviceProfile) {
         assertTrue("name must be set", p.name.isNotBlank())
 
