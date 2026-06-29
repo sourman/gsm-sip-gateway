@@ -7,6 +7,7 @@ import android.os.Build
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
+import android.media.AudioDeviceInfo
 import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.util.Log
@@ -88,6 +89,9 @@ class RtpSession(
     @Volatile private var playbackUsageName = "MEDIA"
     @Volatile private var firstRxInfo = ""
     @Volatile private var firstTxInfo = ""
+    private var lastFlowTxCount = 0L
+    private var lastFlowRxCount = 0L
+
 
     // Capture and playback rates may differ.  VOICE_CALL on MSM8930
     // only initializes at 8 kHz; G.722 decoding outputs 16 kHz PCM.
@@ -312,7 +316,7 @@ class RtpSession(
         // earpiece but is NEVER injected into the modem uplink.
         // Using default (deep-buffer-playback → MultiMedia1) ensures the
         // Incall_Music Audio Mixer MultiMedia1 routes audio to the caller.
-        val usage = if (profile.playbackUsage >= 0) profile.playbackUsage
+        val usage = if (profile.routing.playbackUsage >= 0) profile.routing.playbackUsage
                     else AudioAttributes.USAGE_MEDIA
         val contentType = if (usage == AudioAttributes.USAGE_VOICE_COMMUNICATION)
             AudioAttributes.CONTENT_TYPE_SPEECH else AudioAttributes.CONTENT_TYPE_MUSIC
@@ -339,6 +343,21 @@ class RtpSession(
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
         audioTrack = track
+
+        // Route playback to TYPE_TELEPHONY (modem TX uplink) on devices where
+        // the audio HAL needs an active PCM stream on the telephony endpoint
+        // (Pixel/Tensor aoc-snd-card).  Requires MODIFY_PHONE_STATE permission.
+        if (profile.routing.playbackToTelephony) {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            val telephonyDev = am?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                ?.firstOrNull { it.type == AudioDeviceInfo.TYPE_TELEPHONY }
+            if (telephonyDev != null) {
+                val routed = track.setPreferredDevice(telephonyDev)
+                Log.i(TAG, "AudioTrack routed to TYPE_TELEPHONY: $routed (id=${telephonyDev.id})")
+            } else {
+                Log.w(TAG, "TYPE_TELEPHONY device not found — playback will use default device")
+            }
+        }
 
         // No platform AEC — AudioTrack is on USAGE_MEDIA (different stream
         // from AudioRecord), so platform AEC can't reference it anyway.
@@ -472,18 +491,15 @@ class RtpSession(
         if (wideband) {
             configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_CALL, "VOICE_CALL@16k", 16000))
             configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_CALL, "VOICE_CALL", 8000))
+            configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_DOWNLINK, "VOICE_DOWNLINK@16k", 16000))
+            configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_DOWNLINK, "VOICE_DOWNLINK", 8000))
         } else {
             configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_CALL, "VOICE_CALL", 8000))
+            configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_DOWNLINK, "VOICE_DOWNLINK", 8000))
         }
         configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_RECOGNITION, "VOICE_RECOGNITION", 8000))
         configs.add(SourceConfig(MediaRecorder.AudioSource.MIC, "MIC", 8000))
         configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_COMMUNICATION, "VOICE_COMMUNICATION", 8000))
-        if (wideband) {
-            configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_DOWNLINK, "VOICE_DOWNLINK@16k", 16000))
-            configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_DOWNLINK, "VOICE_DOWNLINK", 8000))
-        } else {
-            configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_DOWNLINK, "VOICE_DOWNLINK", 8000))
-        }
         return configs.filterNot { it.source in silentSourceIds }
     }
 
@@ -551,8 +567,8 @@ class RtpSession(
 
     // Audio parameters from device profile
     private val profile get() = GsmCallManager.profile
-    private val captureGain get() = profile.captureGain
-    private val playbackGain get() = profile.playbackGain
+    private val captureGain get() = profile.audio.captureGain
+    private val playbackGain get() = profile.audio.playbackGain
 
     // Double-talk detection: VOICE_CALL captures uplink+downlink from
     // the modem DSP.  The uplink contains the SIP agent's voice (injected
@@ -567,7 +583,7 @@ class RtpSession(
     // When captureRMS significantly exceeds the expected echo level,
     // the caller must be speaking — forward the audio (some echo leaks
     // but the caller is audible).  This enables full-duplex barge-in.
-    private val echoGateThreshold get() = profile.echoGateThreshold
+    private val echoGateThreshold get() = profile.audio.echoGateThreshold
     @Volatile private var currentPlaybackActive = false
 
     // Decaying echo reference: instead of a hard on/off echo gate, we
@@ -590,11 +606,11 @@ class RtpSession(
     // Initial 1.0 = assume 1:1 coupling; adapts to actual modem DSP gain.
     @Volatile private var echoGainRatio = 1.0f
     private var echoGainSamples = 0
-    private val DOUBLE_TALK_RATIO get() = profile.doubleTalkRatio
+    private val DOUBLE_TALK_RATIO get() = profile.audio.doubleTalkRatio
 
     // Noise gate: below this RMS, send silence instead of captured audio.
     // Threshold is device-specific (modem DSP noise floor varies).
-    private val noiseGateThreshold get() = profile.noiseGateThreshold
+    private val noiseGateThreshold get() = profile.audio.noiseGateThreshold
 
     // Diagnostic counters: track how frames are classified for stats logging
     @Volatile private var echoGatedFrames = 0L
@@ -686,7 +702,18 @@ class RtpSession(
                 }
 
                 val shouldForward: Boolean
-                if (decayingPlaybackRms > echoGateThreshold) {
+                // When playback routes to TYPE_TELEPHONY (modem TX), audio goes
+                // directly to the GSM uplink — no acoustic speaker→mic echo.
+                // Skip echo gate entirely and only apply noise gate.
+                if (profile.routing.playbackToTelephony) {
+                    if (rawCaptureRms < noiseGateThreshold) {
+                        shouldForward = false
+                        noiseGatedFrames++
+                    } else {
+                        shouldForward = true
+                        forwardedFrames++
+                    }
+                } else if (decayingPlaybackRms > echoGateThreshold) {
                     // Agent is speaking (or echo tail still decaying) —
                     // check for double-talk (barge-in).
                     val expectedEcho = (echoGainRatio * decayingPlaybackRms).toInt()
@@ -857,15 +884,23 @@ class RtpSession(
                         " vol:vc=$vc(m=$muted),mu=$vm mic=$micMute"
                     } ?: ""
                 } catch (_: Exception) { "" }
+                // Enhanced "TRX/REC" heartbeat logging for user visibility
+                val flowStats = "AUDIO-FLOW: [GSM -> SIP: REC=${rawCaptureRms} TRX=${if(txPacketCount > lastFlowTxCount) "OK" else "IDLE"}] " +
+                                "[SIP -> GSM: REC=${if(rxPacketCount > lastFlowRxCount) "OK" else "IDLE"} TRX=${playbackRms}]"
+                lastFlowTxCount = txPacketCount
+                lastFlowRxCount = rxPacketCount
+                Log.i(TAG, flowStats)
+                listener?.onRtpStats(flowStats)
+
                 // CPU/memory/thread diagnostics
                 val cpuInfo = getCpuStats()
-                val stats = "tx=$txPacketCount rx=$rxPacketCount play=$playbackFrames " +
+                val stats = "RTP-STATS: tx=$txPacketCount rx=$rxPacketCount play=$playbackFrames " +
                         "capRMS=$captureRms rawCapRMS=$rawCaptureRms playRMS=$playbackRms src=$audioSourceName " +
                         "rate=${captureRate}/${playbackRate} jbuf=${jitterBuffer.size} " +
                         "gates:echo=$echoGatedFrames noise=$noiseGatedFrames fwd=$forwardedFrames dt=$doubleTalkFrames echoG=${"%.2f".format(echoGainRatio)}" +
-                        "$cpuInfo$volInfo" + extraInfo
-                Log.i(TAG, "RTP: $stats")
-                listener?.onRtpStats(stats)
+                        "$cpuInfo$volInfo"
+                Log.d(TAG, stats) // Keep detailed stats in debug log
+
 
                 val elapsed = System.currentTimeMillis() - lastRtpReceivedTime
                 if (elapsed > RTP_TIMEOUT_MS) {
@@ -1091,7 +1126,7 @@ class RtpSession(
                 // The explicit false first ensures the HAL processes it as a
                 // genuine state transition, even if some stale true leaked.
                 // 50ms gap lets the HAL fully tear down before re-creating.
-                val param = profile.incallMusicParam
+                val param = profile.routing.incallMusicParam
                 if (param.isNotEmpty()) {
                     it.setParameters("${param}=false")
                     Thread.sleep(50)
@@ -1131,7 +1166,7 @@ class RtpSession(
      * discovered full path via [DeviceProfile.resolveCmd].
      */
     private fun enableIncallMusicViaMixer() {
-        val mixerCmd = profile.mixerIncallMusicCmd
+        val mixerCmd = profile.mixer.mixerIncallMusicCmd
         if (mixerCmd.isEmpty()) {
             Log.i(TAG, "Mixer: no incall_music commands for ${profile.name}")
             return
@@ -1147,11 +1182,15 @@ class RtpSession(
             try {
                 // Run incall_music mixer commands, then readback key controls (card 0)
                 val bin = DeviceProfile.tinymixBin
-                val cmd = "$resolvedMixerCmd; " +
+                val cmd = if (profile.routing.isAbox) {
+                    "$resolvedMixerCmd; " +
                     "echo 'NSRC1B:'; $bin 'ABOX NSRC1 Bridge' 2>&1; " +
                     "echo 'NSRC1:'; $bin 'ABOX NSRC1' 2>&1; " +
                     "echo 'NSRC0:'; $bin 'ABOX NSRC0' 2>&1; " +
                     "echo 'SPUS0:'; $bin 'ABOX SPUS OUT0' 2>&1"
+                } else {
+                    resolvedMixerCmd
+                }
                 val output = RootShell.execForOutput(cmd, timeoutMs = 8000)
                 val msg = "Mixer incall_music: $output"
                 Log.i(TAG, msg)
@@ -1226,7 +1265,7 @@ class RtpSession(
      * toggle in enableIncallMusic() fired before the route settled.
      */
     private fun reToggleIncallMusic() {
-        val param = profile.incallMusicParam
+        val param = profile.routing.incallMusicParam
         if (param.isEmpty()) return
         try {
             val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
@@ -1266,18 +1305,20 @@ class RtpSession(
             if (tinymix.isNotEmpty()) {
                 Thread({
                     try {
-                        // Phase 1: NSRC routing + bridge state
-                        val routingCmd = buildString {
-                            append("echo '=== NSRC routing ==='; ")
-                            for (i in 0..2) {
-                                append("echo -n 'NSRC${i}='; $tinymix 'ABOX NSRC${i}' 2>/dev/null || echo 'N/A'; ")
-                                append("echo -n 'NSRC${i}_Bridge='; $tinymix 'ABOX NSRC${i} Bridge' 2>/dev/null || echo 'N/A'; ")
+                        // Phase 1: NSRC routing + bridge state (ABOX only)
+                        if (profile.routing.isAbox) {
+                            val routingCmd = buildString {
+                                append("echo '=== NSRC routing ==='; ")
+                                for (i in 0..2) {
+                                    append("echo -n 'NSRC${i}='; $tinymix 'ABOX NSRC${i}' 2>/dev/null || echo 'N/A'; ")
+                                    append("echo -n 'NSRC${i}_Bridge='; $tinymix 'ABOX NSRC${i} Bridge' 2>/dev/null || echo 'N/A'; ")
+                                }
+                                append("echo -n 'SoundType='; $tinymix 'ABOX Sound Type' 2>/dev/null || echo 'N/A'")
                             }
-                            append("echo -n 'SoundType='; $tinymix 'ABOX Sound Type' 2>/dev/null || echo 'N/A'")
-                        }
-                        val routing = RootShell.execForOutput(routingCmd, timeoutMs = 8000)
-                        for (line in routing.lines().filter { it.isNotBlank() }) {
-                            Log.i(TAG, "Diag: $line")
+                            val routing = RootShell.execForOutput(routingCmd, timeoutMs = 8000)
+                            for (line in routing.lines().filter { it.isNotBlank() }) {
+                                Log.i(TAG, "Diag: $line")
+                            }
                         }
 
                         // Phase 2: mixer_paths.xml — voice call & incall_music paths
@@ -1333,10 +1374,9 @@ class RtpSession(
                         // Phase 4-5 removed in v2.8.43 — routing map fully
                         // established (Madera codec, SLIMTX, HPOUT, DSP, ASRC).
 
-                        // Phase 6: Delayed re-check (5s) — see if routing changes
-                        // after enableIncallMusic/enableIncallMusicViaMixer run.
+                        // Phase 6: Delayed re-check (5s) — ABOX only
                         Thread.sleep(5000)
-                        if (running.get()) {
+                        if (running.get() && profile.routing.isAbox) {
                             val recheck = buildString {
                                 append("echo '=== NSRC re-check (t+5s) ==='; ")
                                 for (i in 0..2) {
@@ -1459,125 +1499,5 @@ class RtpSession(
 
     companion object {
         private const val TAG = "RtpSession"
-    }
-}
-
-/**
- * G.711 A-law (PCMA) codec — fallback if G.722 is not negotiated.
- * Narrowband (8 kHz), adequate for basic voice.
- */
-object PcmaCodec {
-    private val ALAW_ENCODE_TABLE = intArrayOf(
-        1, 1, 2, 2, 3, 3, 3, 3,
-        4, 4, 4, 4, 4, 4, 4, 4,
-        5, 5, 5, 5, 5, 5, 5, 5,
-        5, 5, 5, 5, 5, 5, 5, 5,
-        6, 6, 6, 6, 6, 6, 6, 6,
-        6, 6, 6, 6, 6, 6, 6, 6,
-        6, 6, 6, 6, 6, 6, 6, 6,
-        6, 6, 6, 6, 6, 6, 6, 6,
-        7, 7, 7, 7, 7, 7, 7, 7,
-        7, 7, 7, 7, 7, 7, 7, 7,
-        7, 7, 7, 7, 7, 7, 7, 7,
-        7, 7, 7, 7, 7, 7, 7, 7,
-        7, 7, 7, 7, 7, 7, 7, 7,
-        7, 7, 7, 7, 7, 7, 7, 7,
-        7, 7, 7, 7, 7, 7, 7, 7,
-        7, 7, 7, 7, 7, 7, 7, 7
-    )
-
-    fun encodeSample(pcm: Short): Byte {
-        var sample = pcm.toInt()
-        val sign = (sample shr 8) and 0x80
-        if (sign != 0) sample = -sample
-        if (sample > 32635) sample = 32635
-
-        val exponent = if (sample >= 256) ALAW_ENCODE_TABLE[(sample shr 8) and 0x7F]
-        else ALAW_ENCODE_TABLE[(sample shr 4) and 0x1F].let { if (sample < 16) 0 else it }
-
-        val mantissa = if (exponent > 0) (sample shr (exponent + 3)) and 0x0F else (sample shr 4) and 0x0F
-        val encoded = (sign or (exponent shl 4) or mantissa) xor 0xD5
-        return encoded.toByte()
-    }
-
-    fun decodeSample(alaw: Byte): Short {
-        var value = (alaw.toInt() and 0xFF) xor 0xD5
-        val sign = value and 0x80
-        val exponent = (value shr 4) and 7
-        var mantissa = value and 0x0F
-
-        mantissa = (mantissa shl 4) + 8
-        if (exponent > 0) mantissa = (mantissa + 256) shl (exponent - 1)
-
-        return if (sign != 0) (-mantissa).toShort() else mantissa.toShort()
-    }
-
-    /** Encode 8kHz PCM16 to A-law directly (no sample rate conversion). */
-    fun encode8k(pcm: ByteArray): ByteArray {
-        val sampleCount = pcm.size / 2
-        val out = ByteArray(sampleCount)
-        for (i in 0 until sampleCount) {
-            val lo = pcm[i * 2].toInt() and 0xFF
-            val hi = pcm[i * 2 + 1].toInt()
-            val sample = ((hi shl 8) or lo).toShort()
-            out[i] = encodeSample(sample)
-        }
-        return out
-    }
-
-    /** Encode 16kHz PCM16 to A-law with 2:1 averaging downsample.
-     *  Averages each pair of adjacent samples before encoding, acting as
-     *  a simple low-pass filter that prevents aliasing artifacts from
-     *  high frequencies folding back into the 4kHz output band. */
-    fun encode(pcm: ByteArray): ByteArray {
-        val sampleCount = pcm.size / 2
-        val outSize = sampleCount / 2
-        val out = ByteArray(outSize)
-        var outIdx = 0
-        for (i in 0 until sampleCount step 2) {
-            val lo0 = pcm[i * 2].toInt() and 0xFF
-            val hi0 = pcm[i * 2 + 1].toInt()
-            val s0 = (hi0 shl 8) or lo0
-            val s1 = if (i + 1 < sampleCount) {
-                val lo1 = pcm[(i + 1) * 2].toInt() and 0xFF
-                val hi1 = pcm[(i + 1) * 2 + 1].toInt()
-                (hi1 shl 8) or lo1
-            } else s0
-            val avg = ((s0 + s1) / 2).toShort()
-            out[outIdx++] = encodeSample(avg)
-            if (outIdx >= outSize) break
-        }
-        return out
-    }
-
-    /** Decode A-law to 8kHz PCM16 directly (no sample rate conversion). */
-    fun decode8k(alaw: ByteArray): ByteArray {
-        val out = ByteArray(alaw.size * 2)
-        var outIdx = 0
-        for (byte in alaw) {
-            val sample = decodeSample(byte)
-            out[outIdx++] = (sample.toInt() and 0xFF).toByte()
-            out[outIdx++] = ((sample.toInt() shr 8) and 0xFF).toByte()
-        }
-        return out
-    }
-
-    /** Decode A-law to 16kHz PCM16 with 1:2 linear-interpolation upsampling.
-     *  Each input sample produces two output samples: the original and a
-     *  midpoint interpolated toward the next sample.  Eliminates the
-     *  aliasing/zipper noise from the previous zero-order hold approach. */
-    fun decode(alaw: ByteArray): ByteArray {
-        val out = ByteArray(alaw.size * 4)
-        var outIdx = 0
-        for (i in alaw.indices) {
-            val s0 = decodeSample(alaw[i]).toInt()
-            val s1 = if (i + 1 < alaw.size) decodeSample(alaw[i + 1]).toInt() else s0
-            val mid = (s0 + s1) / 2
-            out[outIdx++] = (s0 and 0xFF).toByte()
-            out[outIdx++] = ((s0 shr 8) and 0xFF).toByte()
-            out[outIdx++] = (mid and 0xFF).toByte()
-            out[outIdx++] = ((mid shr 8) and 0xFF).toByte()
-        }
-        return out
     }
 }

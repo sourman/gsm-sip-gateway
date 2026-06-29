@@ -134,8 +134,9 @@ class SipCall(
                 val authParams = SipAuth.parseChallenge(msg)
                 if (authParams != null) {
                     authHandled = true
-                    Log.i(TAG, "INVITE auth challenge, re-sending with credentials")
-                    sipClient.resendInviteWithAuth(this, authParams)
+                    val isProxyAuth = msg.statusCode == 407
+                    Log.i(TAG, "INVITE ${msg.statusCode} auth challenge, re-sending with credentials (proxyAuth=$isProxyAuth)")
+                    sipClient.resendInviteWithAuth(this, authParams, isProxyAuth)
                 }
                 return true
             }
@@ -224,14 +225,16 @@ class SipCall(
 
     /** Send ACK for a received 200 OK */
     private fun sendAck(cseq: Int) {
-        val uri = remoteContactUri ?: return
+        val uri = remoteContactUri ?: "sip:${sipClient.serverDomain}:${sipClient.serverPort}"
         val ack = SipBuilder.ack(
             uri, null, toHeader, fromHeader,
             callId, cseq,
             sipClient.username, sipClient.publicIp, sipClient.localPort
         )
-        sipClient.sendResponse(ack, remoteContactAddress ?: sipClient.serverAddress)
-        Log.d(TAG, "Sent ACK for call $callId (CSeq: $cseq)")
+        // Send ACK to the SIP server address, not the Contact header address.
+        // Providers like Twilio use internal IPs in Contact that are not routable.
+        sipClient.sendResponse(ack, sipClient.serverAddress)
+        Log.d(TAG, "Sent ACK for call $callId (CSeq: $cseq) to ${sipClient.serverAddress}")
     }
 
     /** Send BYE to terminate the call */

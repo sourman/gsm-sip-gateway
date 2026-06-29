@@ -1,0 +1,17 @@
+name = "openai-realtime-sip-webhook"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+workers_dev = true
+account_id = "ca4f0959ffdd2d3073edf994b36f7f2d"
+
+# Routed via the loom.li zone (wrangler provisions the DNS record).
+routes = [
+  { pattern = "sip-webhook.loom.li", custom_domain = true, zone_name = "loom.li" }
+]
+
+[vars]
+OPENAI_PROJECT_ID = "proj_Cy8aafQOE2xGPfAh45zFq0VG"
+TRUNK_DIAL_NUMBER = "+17402185427"
+REALTIME_MODEL = "gpt-realtime-2"
+REALTIME_VOICE = "alloy"
+# OPENAI_API_KEY and OPENAI_WEBHOOK_SECRET are set via `wrangler secret put`

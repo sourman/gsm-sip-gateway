@@ -18,6 +18,10 @@
     <!-- System permission: enables AudioRecord(VOICE_CALL) on rooted device -->
     <uses-permission android:name="android.permission.CAPTURE_AUDIO_OUTPUT"
         tools:ignore="ProtectedPermissions" />
+    <!-- Primary call-audio interception permission for VOICE_CALL/UPLINK/DOWNLINK
+         capture. signature|privileged|role — granted via the priv-app path. -->
+    <uses-permission android:name="android.permission.CALL_AUDIO_INTERCEPTION"
+        tools:ignore="ProtectedPermissions" />
 
     <!-- Phone / GSM call control -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />

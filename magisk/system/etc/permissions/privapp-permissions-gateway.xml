@@ -7,6 +7,8 @@
     <privapp-permissions package="com.callagent.gateway">
         <!-- Audio: capture telephony audio streams (VOICE_CALL, VOICE_DOWNLINK) -->
         <permission name="android.permission.CAPTURE_AUDIO_OUTPUT" />
+        <!-- Audio: primary call-audio interception permission for VOICE_CALL capture -->
+        <permission name="android.permission.CALL_AUDIO_INTERCEPTION" />
 
         <!-- Telephony: read IMEI, precise call state, modify phone state -->
         <permission name="android.permission.READ_PRIVILEGED_PHONE_STATE" />

@@ -40,14 +40,38 @@ object SipAuth {
         uri: String,
         username: String,
         password: String,
-        params: AuthParams
+        params: AuthParams,
+        isProxyAuth: Boolean = false
     ): String {
         val ha1 = md5("$username:${params.realm}:$password")
         val ha2 = md5("$method:$uri")
-        val response = md5("$ha1:${params.nonce}:$ha2")
+
+        val headerName = if (isProxyAuth) "Proxy-Authorization" else "Authorization"
+
+        val response = if (params.qop != null) {
+            val cnonce = md5(System.nanoTime().toString()).substring(0, 16)
+            val nc = "00000001"
+            md5("$ha1:${params.nonce}:$nc:$cnonce:${params.qop}:$ha2").let { resp ->
+                return buildString {
+                    append("$headerName: Digest username=\"$username\", ")
+                    append("realm=\"${params.realm}\", ")
+                    append("nonce=\"${params.nonce}\", ")
+                    append("uri=\"$uri\", ")
+                    append("qop=${params.qop}, ")
+                    append("nc=$nc, ")
+                    append("cnonce=\"$cnonce\", ")
+                    append("response=\"$resp\", ")
+                    append("algorithm=MD5")
+                    if (params.opaque != null) append(", opaque=\"${params.opaque}\"")
+                    append("\r\n")
+                }
+            }
+        } else {
+            md5("$ha1:${params.nonce}:$ha2")
+        }
 
         return buildString {
-            append("Authorization: Digest username=\"$username\", ")
+            append("$headerName: Digest username=\"$username\", ")
             append("realm=\"${params.realm}\", ")
             append("nonce=\"${params.nonce}\", ")
             append("uri=\"$uri\", ")

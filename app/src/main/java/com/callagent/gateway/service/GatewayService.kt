@@ -177,6 +177,7 @@ class GatewayService : Service() {
             ACTION_STOP -> stopGateway()
             ACTION_RELOAD_STATS -> reloadStats()
             ACTION_DIAL -> dialFromDialler(intent)
+            ACTION_RELAUNCH_FROM_FG -> startGateway(intent, forceRestart = true)
             else -> startGateway(intent)
         }
         return START_STICKY
@@ -197,13 +198,20 @@ class GatewayService : Service() {
         broadcastStatus(orchestrator?.bridgeState?.name ?: "IDLE", "Stats reloaded")
     }
 
-    private fun startGateway(intent: Intent?) {
+    private fun startGateway(intent: Intent?, forceRestart: Boolean = false) {
         // Guard: if the gateway is already running (SIP client exists and
         // we're not in stopped state), don't tear it down and restart.
         // This prevents redundant ACTION_START intents (e.g. from the
         // Activity opening, START_STICKY restart, or BootReceiver) from
         // killing an active SIP registration or call bridge.
-        if (!stopped && sipClient != null) {
+        //
+        // forceRestart is set by ACTION_RELAUNCH_FROM_FG, sent from
+        // MainActivity while the app is in the foreground. Restarting the
+        // FGS from a foreground launch makes the
+        // PROCESS_CAPABILITY_FOREGROUND_MICROPHONE bit stick for the FGS
+        // process lifetime, un-silencing AudioRecord(VOICE_CALL) in
+        // background operation (see docs/VOICE_CALL_SILENCING_INVESTIGATION.md).
+        if (!forceRestart && !stopped && sipClient != null) {
             Log.i(TAG, "startGateway: already running, skipping restart")
             // Broadcast current state so the Activity picks up the live status
             val state = orchestrator?.bridgeState ?: CallOrchestrator.BridgeState.IDLE
@@ -215,6 +223,10 @@ class GatewayService : Service() {
             }
             broadcastStatus(state.name, info)
             return
+        }
+
+        if (forceRestart && sipClient != null) {
+            Log.i(TAG, "startGateway: force restart from foreground (re-establishing mic capability)")
         }
 
         // Clean up any existing client before starting a new one
@@ -676,6 +688,7 @@ class GatewayService : Service() {
         const val ACTION_STOP = "com.callagent.gateway.STOP"
         const val ACTION_RELOAD_STATS = "com.callagent.gateway.RELOAD_STATS"
         const val ACTION_DIAL = "com.callagent.gateway.DIAL"
+        const val ACTION_RELAUNCH_FROM_FG = "com.callagent.gateway.RELAUNCH_FROM_FG"
         const val EXTRA_SERVER = "server"
         const val EXTRA_PORT = "port"
         const val EXTRA_USER = "user"
@@ -688,6 +701,24 @@ class GatewayService : Service() {
         fun start(context: Context, server: String, port: Int, user: String, pass: String, localServer: Boolean = false) {
             val intent = Intent(context, GatewayService::class.java).apply {
                 action = ACTION_START
+                putExtra(EXTRA_SERVER, server)
+                putExtra(EXTRA_PORT, port)
+                putExtra(EXTRA_USER, user)
+                putExtra(EXTRA_PASS, pass)
+                putExtra(EXTRA_LOCAL_SERVER, localServer)
+            }
+            context.startForegroundService(intent)
+        }
+
+        /**
+         * Force-restart the FGS from a foreground activity launch. Restarts the
+         * service process so the PROCESS_CAPABILITY_FOREGROUND_MICROPHONE bit
+         * sticks, un-silencing AudioRecord(VOICE_CALL) in background operation.
+         * Only call this when the app is in the foreground (e.g. MainActivity.onCreate).
+         */
+        fun relaunchFromForeground(context: Context, server: String, port: Int, user: String, pass: String, localServer: Boolean = false) {
+            val intent = Intent(context, GatewayService::class.java).apply {
+                action = ACTION_RELAUNCH_FROM_FG
                 putExtra(EXTRA_SERVER, server)
                 putExtra(EXTRA_PORT, port)
                 putExtra(EXTRA_USER, user)

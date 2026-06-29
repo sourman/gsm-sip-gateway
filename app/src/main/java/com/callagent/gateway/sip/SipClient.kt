@@ -283,6 +283,10 @@ class SipClient(
             callIdBase, cseq.getAndIncrement(),
             auth
         )
+        if (auth != null) {
+            Log.d(TAG, "REGISTER with auth header: ${auth.take(200)}")
+            Log.d(TAG, "REGISTER full packet: ${msg.take(500)}")
+        }
         sendTo(msg, serverAddress)
     }
 
@@ -298,12 +302,25 @@ class SipClient(
                 listener?.onRegistered()
                 true
             }
-            401, 407 -> {
-                uiLog("REGISTER ${msg.statusCode} challenge, sending auth")
+            401 -> {
+                uiLog("REGISTER 401 challenge, sending auth")
                 val authParams = SipAuth.parseChallenge(msg)
                 if (authParams != null) {
                     val uri = "sip:$serverDomain:$serverPort"
-                    val auth = SipAuth.buildAuthHeader("REGISTER", uri, username, password, authParams)
+                    val auth = SipAuth.buildAuthHeader("REGISTER", uri, username, password, authParams, isProxyAuth = false)
+                    sendRegister(auth)
+                } else {
+                    uiLog("Failed to parse auth challenge")
+                    registrationLatch?.countDown()
+                }
+                false
+            }
+            407 -> {
+                uiLog("REGISTER 407 challenge, sending auth")
+                val authParams = SipAuth.parseChallenge(msg)
+                if (authParams != null) {
+                    val uri = "sip:$serverDomain:$serverPort"
+                    val auth = SipAuth.buildAuthHeader("REGISTER", uri, username, password, authParams, isProxyAuth = true)
                     sendRegister(auth)
                 } else {
                     uiLog("Failed to parse auth challenge")
@@ -407,14 +424,14 @@ class SipClient(
     }
 
     /** Re-send INVITE with authentication */
-    fun resendInviteWithAuth(call: SipCall, authParams: SipAuth.AuthParams) {
+    fun resendInviteWithAuth(call: SipCall, authParams: SipAuth.AuthParams, isProxyAuth: Boolean = false) {
         val toHeader = call.toHeader ?: return
         // Extract target URI from To header
         val uriStart = toHeader.indexOf("sip:")
         val uriEnd = toHeader.indexOf('>', uriStart).let { if (it < 0) toHeader.length else it }
         val targetUri = if (uriStart >= 0) toHeader.substring(uriStart, uriEnd) else return
 
-        val auth = SipAuth.buildInviteAuthHeader(targetUri, username, password, authParams)
+        val auth = SipAuth.buildAuthHeader("INVITE", targetUri, username, password, authParams, isProxyAuth)
         val invite = SipBuilder.invite(
             targetUri, username, serverDomain,
             publicIp, localPort,
