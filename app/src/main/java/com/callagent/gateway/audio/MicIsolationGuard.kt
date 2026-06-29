@@ -105,10 +105,15 @@ class MicIsolationGuard(
         }
         val bufSize = minBuf.coerceAtLeast(frameBytes)
 
-        val sources = listOf(
-            MediaRecorder.AudioSource.VOICE_CALL to "VOICE_CALL",
-            MediaRecorder.AudioSource.MIC to "MIC"
-        )
+        val sources = if (profile.routing.playbackToTelephony) {
+            // VOICE_CALL captures modem downlink on Pixel — not the physical mic.
+            listOf(MediaRecorder.AudioSource.MIC to "MIC")
+        } else {
+            listOf(
+                MediaRecorder.AudioSource.VOICE_CALL to "VOICE_CALL",
+                MediaRecorder.AudioSource.MIC to "MIC"
+            )
+        }
         var maxRms = 0
         for ((source, name) in sources) {
             val rec = try {

@@ -43,6 +43,9 @@ object GsmCallManager {
      *  app log viewer (Settings tab).  Set by GatewayService. */
     @Volatile var logCallback: ((String) -> Unit)? = null
 
+    /** Set when [batchMixerSetup] finishes; RtpSession waits past this before capture. */
+    @Volatile var mixerSetupCompletedAtMs: Long = 0
+
     /** Log to both Android logcat AND the app log viewer. */
     private fun appLog(msg: String) {
         Log.i(TAG, msg)
@@ -247,6 +250,7 @@ object GsmCallManager {
     private fun configureAudioBridge() {
         if (listener == null) return // Standalone mode: let Android handle audio routing natively
         
+        mixerSetupCompletedAtMs = 0
         try {
             // Run ABOX/ALSA discovery on first call for diagnostics
             runMixerDiscovery()
@@ -264,13 +268,14 @@ object GsmCallManager {
                 }
 
                 audioManager?.let { am ->
-                    // Do NOT set isMicrophoneMute = true here!
-                    // v2.8.50: Samsung Exynos HAL interprets mic mute as "mute
-                    // entire voice uplink to modem", which blocks NSRC-injected
-                    // AudioTrack audio from reaching the caller.
-                    // MSM8930: mic muting is handled at ALSA level (DEC MUX=ZERO,
-                    // MICBIAS=0) in mixerSetupCmd — no need for API-level mute.
-                    am.isMicrophoneMute = false
+                    // Samsung Exynos HAL treats API mic mute as full uplink mute
+                    // (blocks incall_music injection).  Pixel/Tensor use tinymix +
+                    // INCALL_TX and can safely mute the physical mic here.
+                    if (profile.routing.muteMicrophoneAtApi) {
+                        am.isMicrophoneMute = true
+                    } else {
+                        am.isMicrophoneMute = false
+                    }
                     enforceVolumes(am)
 
                     // Delay mixer/volume setup until speaker route change settles.
@@ -345,6 +350,7 @@ object GsmCallManager {
         if (listener == null) return // Standalone mode
         
         try {
+            mixerSetupCompletedAtMs = 0
             // Single su call to restore all mixer controls
             batchMixerRestore()
 
@@ -411,6 +417,7 @@ object GsmCallManager {
             // Use execForOutput to capture discovery/diagnostic output from setup commands
             val setupOutput = RootShell.execForOutput(resolvedSetup, timeoutMs = 8000)
             if (setupOutput.isNotBlank()) appLog("Mixer setup: $setupOutput")
+            mixerSetupCompletedAtMs = System.currentTimeMillis()
 
             // Step 3: Readback AFTER — verify controls were actually changed
             if (profile.routing.isAbox) {

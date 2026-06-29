@@ -6,6 +6,7 @@ magisk/system/priv-app/Gateway/
 local.properties
 .env
 .env.build
+recordings/
 
 # Gradle
 .gradle/

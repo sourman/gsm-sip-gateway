@@ -102,6 +102,13 @@ class DeviceProfileTest {
     }
 
     @Test
+    fun `pixel7 mutes physical mic at API and tinymix`() {
+        val p = DeviceProfile.pixel7Tensor()
+        assertTrue(p.routing.muteMicrophoneAtApi)
+        assertTrue(p.mixer.micMuteCmd.contains("Voice Call Mic Mute"))
+    }
+
+    @Test
     fun `exynos9820 allows acoustic coupling`() {
         // Exynos capture relies on the physical mic picking up caller audio
         // from the speaker — digital capture is silent on this HAL.

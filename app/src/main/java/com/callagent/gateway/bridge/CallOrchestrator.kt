@@ -5,6 +5,7 @@ import android.os.Build
 import android.telecom.Call
 import android.util.Log
 import com.callagent.gateway.RootShell
+import com.callagent.gateway.audio.MicIsolationGuard
 import com.callagent.gateway.gsm.GsmCallManager
 import com.callagent.gateway.rtp.RtpPacket
 import com.callagent.gateway.rtp.RtpSession
@@ -468,6 +469,21 @@ class CallOrchestrator(
         // the appops command finished.  RtpSession also periodically re-asserts
         // appops in its timeoutLoop for screen-off resilience.
         forceAllowRecordAudio()
+
+        val profile = GsmCallManager.profile
+        if (!profile.routing.allowAcousticCoupling) {
+            val guard = MicIsolationGuard(context, profile)
+            when (val iso = guard.verify { msg -> listener?.onRtpStats(msg) }) {
+                is MicIsolationGuard.MicIsolationResult.NotIsolated -> {
+                    val err = "Mic not isolated (${"%.1f".format(iso.rmsDb)} dBFS)"
+                    Log.e(TAG, "$err — refusing bridge")
+                    listener?.onError(err)
+                    tearDown(err)
+                    return
+                }
+                MicIsolationGuard.MicIsolationResult.Isolated -> { }
+            }
+        }
 
         activeRtpSession?.stop()
         val session = RtpSession(context, localPort, remoteAddr, remotePort, payloadType)

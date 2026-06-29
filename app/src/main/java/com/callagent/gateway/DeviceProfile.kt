@@ -545,6 +545,7 @@ data class DeviceProfile(
                     append("tinymix 'EP2 TX Mixer INCALL_TX' 1 2>/dev/null")
                 },
                 mixerDiagGrep = "tinymix 2>&1 | grep -iE '(INCALL|Incall|Voice Call|EP[1-6].*Mixer)'",
+                micMuteCmd = "tinymix 'Voice Call Mic Mute' 1 2>/dev/null; tinymix 'Incall Mic Mute' 1 2>/dev/null",
             ),
             audio = AudioCalibration(
                 musicVolPercent = 100,
@@ -565,6 +566,7 @@ data class DeviceProfile(
                 appopsPropagationMs = 500,
                 playbackToTelephony = true,
                 isAbox = false,
+                muteMicrophoneAtApi = true,
             ),
         )
 
@@ -688,6 +690,10 @@ data class MixerProfile(
 
     /** Grep pattern for diagnostic tinymix dump. */
     val mixerDiagGrep: String,
+
+    /** Re-assert physical mic mute during an active bridge (tinymix only).
+     *  Empty = skip.  Pixel/Tensor: HAL can un-mute the mic mid-call. */
+    val micMuteCmd: String = "",
 )
 
 /**
@@ -767,6 +773,11 @@ data class HalRoutingProfile(
      *  Defaults to false — the gateway must be a pure relay and FAIL CLOSED
      *  if isolation cannot be verified. */
     val allowAcousticCoupling: Boolean = false,
+
+    /** Mute the physical mic via AudioManager.isMicrophoneMute during bridge.
+     *  Samsung Exynos must stay false (HAL treats it as full uplink mute).
+     *  Pixel/Tensor: safe when SIP playback routes via INCALL_TX tinymix. */
+    val muteMicrophoneAtApi: Boolean = false,
 )
 
 /**

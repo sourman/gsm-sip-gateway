@@ -203,13 +203,10 @@ class RtpSession(
         } else {
             configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_CALL, "VOICE_CALL", 8000))
         }
-        // Mic-based sources: in speaker mode, the physical mic picks up the
-        // caller's voice from the speaker.  This is acoustic coupling — not
-        // ideal but functional when digital capture sources fail.
-        // VOICE_RECOGNITION bypasses noise suppression that can mute call audio.
-        configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_RECOGNITION, "VOICE_RECOGNITION", 8000))
-        configs.add(SourceConfig(MediaRecorder.AudioSource.MIC, "MIC", 8000))
-        configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_COMMUNICATION, "VOICE_COMMUNICATION", 8000))
+        // Mic-based sources: acoustic coupling — only when digital capture is
+        // unavailable.  Never on playbackToTelephony devices (Pixel/Tensor):
+        // the physical mic must not feed the bridge.
+        appendMicFallbackSources(configs)
         // VOICE_DOWNLINK (source 3): DEAD LAST — on MSM8930 it initializes
         // successfully (STATE_INITIALIZED) but captures SILENCE because the
         // Incall_Rec mixer controls don't exist on this SoC.  If it were
@@ -498,10 +495,16 @@ class RtpSession(
             configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_CALL, "VOICE_CALL", 8000))
             configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_DOWNLINK, "VOICE_DOWNLINK", 8000))
         }
+        appendMicFallbackSources(configs)
+        return configs.filterNot { it.source in silentSourceIds }
+    }
+
+    /** Mic-based capture fallbacks — disabled on pure-relay (telephony TX) profiles. */
+    private fun appendMicFallbackSources(configs: MutableList<SourceConfig>) {
+        if (profile.routing.playbackToTelephony) return
         configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_RECOGNITION, "VOICE_RECOGNITION", 8000))
         configs.add(SourceConfig(MediaRecorder.AudioSource.MIC, "MIC", 8000))
         configs.add(SourceConfig(MediaRecorder.AudioSource.VOICE_COMMUNICATION, "VOICE_COMMUNICATION", 8000))
-        return configs.filterNot { it.source in silentSourceIds }
     }
 
     /**
@@ -631,6 +634,9 @@ class RtpSession(
      */
     private fun captureLoop(): Boolean {
         val record = audioRecord ?: return false
+
+        waitForCaptureWarmup()
+        probeIncallCaptureHalOnce()
 
         record.startRecording()
         Log.i(TAG, "Capture started: source=$audioSourceName capRate=$captureRate session=$audioSessionId gain=${captureGain}x profile=${profile.name} state=${record.recordingState}")
@@ -858,6 +864,7 @@ class RtpSession(
         if (running.get()) {
             reAssertAppOps()
             reToggleIncallMusic()
+            reAssertCaptureRoute()
         }
 
         while (running.get()) {
@@ -871,6 +878,15 @@ class RtpSession(
                 // re-revokes RECORD_AUDIO for background apps when screen
                 // is off.  Re-asserting periodically keeps capture alive.
                 reAssertAppOps()
+
+                val micMuteCmd = profile.mixer.micMuteCmd
+                if (micMuteCmd.isNotEmpty()) {
+                    try {
+                        val resolved = DeviceProfile.resolveCmd(micMuteCmd)
+                        if (resolved.isNotEmpty()) RootShell.execForOutput(resolved, timeoutMs = 3000)
+                    } catch (_: Exception) {}
+                }
+                reAssertCaptureRoute()
 
                 // Log detailed stats every 5s
                 val extraInfo = buildString {
@@ -1260,6 +1276,78 @@ class RtpSession(
         } catch (e: Exception) {
             Log.w(TAG, "appops re-assert failed: ${e.message}")
         }
+    }
+
+    private fun hasIncallCaptureDlRoute(): Boolean =
+        profile.mixer.mixerSetupCmd.contains("Incall Capture Stream0' DL")
+
+    /** Wait for async mixer setup before opening VOICE_CALL capture. */
+    private fun waitForCaptureWarmup() {
+        if (!hasIncallCaptureDlRoute()) return
+        val warmupAfterMixerMs = 750L
+        val mixerDone = GsmCallManager.mixerSetupCompletedAtMs
+        val targetStart = if (mixerDone > 0) {
+            mixerDone + warmupAfterMixerMs
+        } else {
+            System.currentTimeMillis() + profile.routing.routeChangeDelayMs + warmupAfterMixerMs
+        }
+        val waitMs = targetStart - System.currentTimeMillis()
+        if (waitMs > 0) {
+            Log.i(TAG, "Capture warm-up: waiting ${waitMs}ms for incall DL route")
+            listener?.onRtpStats("Capture warm-up: ${waitMs}ms for DL route")
+            try { Thread.sleep(waitMs.coerceAtMost(5000)) } catch (_: InterruptedException) { return }
+        }
+    }
+
+    /** One-shot tinycap probe on audio_incall_cap PCM (Pixel 7 HAL diagnostics). */
+    private fun probeIncallCaptureHalOnce() {
+        if (!hasIncallCaptureDlRoute()) return
+        try {
+            val cmd = buildString {
+                append("if [ ! -x /data/local/tmp/tinycap ]; then echo 'tinycap not found'; exit 0; fi; ")
+                append("echo '=== incall capture HAL probe ==='; ")
+                append("for d in /proc/asound/card*/pcm*c; do ")
+                append("  [ -d \"\$d/sub0\" ] || continue; ")
+                append("  name=\$(grep '^name:' \"\$d/info\" 2>/dev/null | head -1); ")
+                append("  echo \"\$name\" | grep -qi incall_cap || continue; ")
+                append("  card=\${d#/proc/asound/}; card=\${card%%/*}; cardnum=\${card#card}; ")
+                append("  pcm=\${d##*/}; devnum=\${pcm#pcm}; devnum=\${devnum%c}; ")
+                append("  s=\$(head -1 \$d/sub0/status 2>/dev/null); ")
+                append("  echo \"probe \$card/\$pcm: \$name status=\$s\"; ")
+                append("  ch=\$(grep '^channels:' \$d/sub0/hw_params 2>/dev/null | awk '{print \$2}'); ")
+                append("  rate=\$(grep '^rate:' \$d/sub0/hw_params 2>/dev/null | awk '{print \$2}'); ")
+                append("  timeout 2 /data/local/tmp/tinycap /data/local/tmp/incall_probe.raw ")
+                append("-D \$cardnum -d \$devnum -c \${ch:-2} -r \${rate:-8000} -b 16 -p 160 -n 2 2>&1 | head -2; ")
+                append("  f=/data/local/tmp/incall_probe.raw; ")
+                append("  if [ -f \"\$f\" ]; then ")
+                append("    nz=\$(od -An -tx1 \"\$f\" | tr ' ' '\\n' | grep -cv '^00\$\\|^\$'); ")
+                append("    echo \"  non-zero bytes: \$nz\"; rm -f \"\$f\"; ")
+                append("  fi; ")
+                append("done")
+            }
+            val result = RootShell.execForOutput(cmd, timeoutMs = 8000)
+            for (line in result.lines().filter { it.isNotBlank() }) {
+                Log.i(TAG, "Diag: $line")
+            }
+            val summary = result.lines().firstOrNull { it.contains("non-zero") }
+                ?: result.lines().lastOrNull { it.isNotBlank() }
+            if (summary != null) listener?.onRtpStats("HAL probe: $summary")
+        } catch (e: Exception) {
+            Log.w(TAG, "Incall capture HAL probe failed: ${e.message}")
+        }
+    }
+
+    /** Re-assert modem downlink routing into incall capture (HAL may reset mid-call). */
+    private fun reAssertCaptureRoute() {
+        if (!hasIncallCaptureDlRoute()) return
+        val resolved = DeviceProfile.resolveCmd(
+            "tinymix 'Incall Capture Stream0' DL 2>/dev/null"
+        )
+        if (resolved.isEmpty()) return
+        try {
+            val out = RootShell.execForOutput(resolved, timeoutMs = 3000)
+            if (out.isNotBlank()) Log.d(TAG, "Capture route re-assert: $out")
+        } catch (_: Exception) {}
     }
 
     /**
