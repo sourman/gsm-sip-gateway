@@ -109,7 +109,10 @@ build_apk() {
 
     if [ "$BUILD_TYPE" = "release" ]; then
         ./gradlew assembleRelease --no-daemon
-        APK_PATH="app/build/outputs/apk/release/app-release-unsigned.apk"
+        APK_PATH="app/build/outputs/apk/release/app-release.apk"
+        if [ ! -f "$APK_PATH" ]; then
+            APK_PATH="app/build/outputs/apk/release/app-release-unsigned.apk"
+        fi
     else
         ./gradlew assembleDebug --no-daemon
         APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
@@ -120,10 +123,41 @@ build_apk() {
         echo "APK built: $APK_PATH"
         cp "$APK_PATH" "$SCRIPT_DIR/gateway.apk"
         echo "Copied to: $SCRIPT_DIR/gateway.apk"
+        # Sign the APK so it can be installed/updated as a system priv-app.
+        # An unsigned release build fails pm install with NO_CERTIFICATES and
+        # cannot be used as the basis for a Magisk priv-app overlay update.
+        sign_apk "$SCRIPT_DIR/gateway.apk"
     else
         echo "ERROR: APK not found at $APK_PATH"
         exit 1
     fi
+}
+
+# ── Sign APK ─────────────────────────────────────────
+
+sign_apk() {
+    local APK="$1"
+    local APKSIGNER=""
+    for candidate in \
+        "$ANDROID_HOME/build-tools"/*/apksigner \
+        "$ANDROID_SDK_ROOT"/build-tools/*/apksigner \
+        /opt/android-sdk/build-tools/*/apksigner \
+        "$HOME/Android/Sdk/build-tools"/*/apksigner; do
+        if [ -x "$candidate" ] 2>/dev/null; then APKSIGNER="$candidate"; break; fi
+    done
+    if [ -z "$APKSIGNER" ]; then
+        echo "WARNING: apksigner not found; APK left unsigned (priv-app install will fail)"
+        return 0
+    fi
+    local KS="${GATEWAY_KEYSTORE:-$HOME/.android/debug.keystore}"
+    if [ ! -f "$KS" ]; then
+        echo "WARNING: keystore not found at $KS; APK left unsigned"
+        return 0
+    fi
+    echo "Signing APK with $APKSIGNER ..."
+    "$APKSIGNER" sign --ks "$KS" --ks-pass pass:android \
+        --key-pass pass:android --ks-key-alias androiddebugkey "$APK" \
+        && echo "APK signed" || echo "WARNING: APK signing failed"
 }
 
 # ── Build Magisk module ─────────────────────────────
