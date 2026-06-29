@@ -455,4 +455,50 @@ object GsmCallManager {
     /** Get current call number */
     val currentNumber: String?
         get() = activeCall?.details?.handle?.schemeSpecificPart
+
+    /**
+     * Decide whether a post-restore tinymix readback [probe] still reflects an
+     * active-call mixer state instead of the idle default. Used to detect a
+     * defective teardown (e.g. the Pixel 7 defect that left mic mutes ON and
+     * INCALL playback/mixers ON at REST) so [batchMixerRestore] can be retried.
+     *
+     * Pure over the probe string, so it is unit-testable without a device.
+     * A control reports "stuck" if any watched control holds its in-call value:
+     *  - mute/enable controls (Voice Tx/Rx Mute, INCALL playback, EP TX mixers,
+     *    Incall_Music mixers) are stuck when =1
+     *  - Main Mic Switch (generic Exynos) is stuck when =0 (mic disabled)
+     *  - =N/A or a missing control never counts as stuck
+     */
+    fun mixerLooksStuck(probe: String): Boolean {
+        if (probe.isBlank()) return false
+        // name → value that indicates the call path is still up.
+        // Mute/inject controls are active at 1; the Exynos mic switch is off (0) during a call.
+        val stuckWhenOne = setOf(
+            "Voice Call Mic Mute",
+            "Incall Mic Mute",
+            "Incall Playback Stream0",
+            "EP2 TX Mixer INCALL_TX",
+            "EP6 TX Mixer INCALL_TX",
+            "Voice Tx Mute",
+            "Voice Rx Device Mute",
+            "Incall_Music Audio Mixer MultiMedia1",
+            "Incall_Music Audio Mixer MultiMedia2",
+        )
+        val stuckWhenZero = setOf("Main Mic Switch")
+
+        val values = HashMap<String, String>()
+        // tolerate "Name = value", "Name=value", leading/trailing spaces, multiple lines
+        val regex = Regex("""^\s*([^=\n]+?)\s*=\s*([^\n]*?)\s*$""")
+        for (line in probe.lines()) {
+            val m = regex.matchEntire(line) ?: continue
+            values[m.groupValues[1]] = m.groupValues[2]
+        }
+
+        for ((control, value) in values) {
+            if (value == "N/A") continue
+            if (control in stuckWhenOne && value == "1") return true
+            if (control in stuckWhenZero && value == "0") return true
+        }
+        return false
+    }
 }
