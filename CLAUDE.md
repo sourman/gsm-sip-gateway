@@ -33,11 +33,12 @@ The app is installed as a Magisk **system priv-app**, so `adb install gateway.ap
 **Primary dev loop — hot-deploy (no reboot):** copy the new APK into the live module overlay and restart the service:
 
 ```bash
-./deploy.sh              # build release + hot-swap
+./deploy.sh              # build release + hot-swap + configure SignalWire SIP
 ./deploy.sh --no-build   # skip build when gateway.apk already exists
+./deploy.sh --no-sip     # skip SharedPreferences SIP configure step
 ```
 
-`deploy.sh` pushes to `/data/adb/modules/sip-gsm-gateway/system/priv-app/Gateway/Gateway.apk`, verifies MD5 against `/system/priv-app/Gateway/Gateway.apk`, force-stops the app, and root-launches the `MicCapabilityGuard` foreground trampoline to restart `GatewayService`.
+`deploy.sh` pushes to `/data/adb/modules/sip-gsm-gateway/system/priv-app/Gateway/Gateway.apk`, verifies MD5 against `/system/priv-app/Gateway/Gateway.apk`, writes SIP prefs via `scripts/configure-sip.sh`, force-stops the app, and root-launches the `MicCapabilityGuard` foreground trampoline to restart `GatewayService`.
 
 **Full module reinstall + reboot** — only when module structure or privapp-permissions changed (new permissions, manifest paths, tinymix binary, etc.):
 
@@ -56,7 +57,9 @@ md5sum gateway.apk                                             # host
 adb shell su -c "md5sum /system/priv-app/Gateway/Gateway.apk"   # must match
 ```
 
-**Credentials survive module reinstalls + reboots, but NOT a `/data/app` uninstall.** SIP credentials (server, username, password) are stored in the app's plaintext `"gateway"` `SharedPreferences` (written by `SettingsFragment`, read by `GatewayService`). They persist across Magisk module reinstalls and reboots, but a `/data/app` uninstall wipes app data — if a redeploy cycle uninstalls the app, credentials must be re-entered. (`CredentialStore` exists as an encrypted-at-rest store but is not yet wired into the live read path.)
+**Credentials survive module reinstalls + reboots, but NOT a `/data/app` uninstall.** SIP credentials are stored in the app's `"gateway"` `SharedPreferences` (Settings UI, or `scripts/configure-sip.sh`). They persist across Magisk module reinstalls and reboots, but a `/data/app` uninstall wipes app data.
+
+**Default SIP peer (SignalWire test rig):** fresh installs with empty prefs auto-register to `gateway@loomli-gsm-gateway.dapp.signalwire.com:5060` (UDP, IP auth — no password). Baked in via `BuildConfig` / `SipConfig`; `./deploy.sh` also runs `scripts/configure-sip.sh --force` to write prefs on-device. Override in Settings, via env vars to `configure-sip.sh`, or by changing `DEFAULT_SIP_*` in `app/build.gradle.kts`.
 
 ## VOICE_CALL capture (the core capture mechanism)
 
@@ -92,9 +95,11 @@ Unknown devices auto-detect to a generic Qualcomm / Exynos / Generic profile (An
 
 **Pixel 7 requires the downlink-routing mixer fix.** `DeviceProfile.pixel7Tensor()` sets `tinymix 'Incall Capture Stream0' DL` in `mixerSetupCmd` (commit aad6124). Without it the AOC DSP routes nothing into the incall capture ring buffer, and `AudioRecord(VOICE_CALL)` reads silence *even after the policy fix above is applied*. Both fixes are required on the Pixel 7 — the policy fix un-silences the source, this mixer fix routes audio into it.
 
-## Test rig (bridge-worker)
+## Test rig (SignalWire + bridge-worker)
 
-`bridge-worker/` contains a Cloudflare Worker used as the **current test configuration** for end-to-end verification (Twilio Elastic SIP Trunk → OpenAI Realtime). It is **not** part of the gateway — it's downstream SIP infrastructure that happens to be used for testing. The gateway itself is SIP-agnostic.
+**Default SIP peer:** SignalWire Domain Application at `loomli-gsm-gateway.dapp.signalwire.com` (username `gateway`, IP auth). Provision with `scripts/signalwire/create-domain-app.sh`; push prefs with `scripts/configure-sip.sh`.
+
+`bridge-worker/` contains a Cloudflare Worker used as **optional downstream** for end-to-end verification (Twilio Elastic SIP Trunk → OpenAI Realtime). It is **not** part of the gateway — it's downstream SIP infrastructure. The gateway itself is SIP-agnostic.
 
 ```bash
 cd bridge-worker

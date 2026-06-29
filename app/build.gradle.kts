@@ -24,6 +24,11 @@ android {
         targetSdk = 34
         versionCode = 329
         versionName = "2.8.51"
+
+        // Default SIP peer when SharedPreferences are empty (SignalWire test rig).
+        buildConfigField("String", "DEFAULT_SIP_SERVER", "\"loomli-gsm-gateway.dapp.signalwire.com\"")
+        buildConfigField("String", "DEFAULT_SIP_USER", "\"gateway\"")
+        buildConfigField("int", "DEFAULT_SIP_PORT", "5060")
     }
 
     signingConfigs {

@@ -42,6 +42,9 @@ class SipClient(
     @Volatile private var lastServerResponseTime = 0L
     @Volatile private var registrationLatch: CountDownLatch? = null
 
+    /** SignalWire Domain Apps authenticate by IP whitelist — REGISTER returns 404. */
+    private val ipAuthMode = password.isEmpty() && serverDomain.endsWith(".dapp.signalwire.com")
+
     private val activeCalls = ConcurrentHashMap<String, SipCall>()
     /** Single-thread executor for all socket sends — avoids NetworkOnMainThreadException */
     private var sendExecutor: ExecutorService? = null
@@ -81,7 +84,9 @@ class SipClient(
             catch (e: Exception) { uiLog("Monitor loop crashed: ${e.message}") }
         }, "SIP-Monitor").start()
         Thread({
-            try { register() }
+            try {
+                if (ipAuthMode) registerViaKeepalive() else register()
+            }
             catch (e: Exception) { uiLog("Register thread crashed: ${e.message}") }
         }, "SIP-Register").start()
     }
@@ -193,7 +198,7 @@ class SipClient(
 
         // OPTIONS response (for our keepalive) — update server liveness tracker
         if (msg.isResponse && msg.cseq?.contains("OPTIONS") == true) {
-            lastServerResponseTime = System.currentTimeMillis()
+            handleOptionsResponse(msg)
             return
         }
 
@@ -251,6 +256,39 @@ class SipClient(
     }
 
     // ── Registration ────────────────────────────────────
+
+    /** IP-auth trunks (SignalWire Domain Apps) reject REGISTER — verify via OPTIONS instead. */
+    private fun registerViaKeepalive(): Boolean {
+        for (attempt in 1..3) {
+            if (!running.get()) return false
+            uiLog("OPTIONS keepalive attempt $attempt/3 (IP auth)")
+            registrationLatch = CountDownLatch(1)
+            sendOptions()
+            try {
+                registrationLatch?.await(10, TimeUnit.SECONDS)
+            } catch (_: InterruptedException) { /* stop requested */ }
+            if (registered) return true
+            if (!running.get()) return false
+            Thread.sleep(2000)
+        }
+        uiLog("IP-auth keepalive failed after 3 attempts")
+        listener?.onRegistrationFailed()
+        return false
+    }
+
+    private fun handleOptionsResponse(msg: SipMessage) {
+        lastServerResponseTime = System.currentTimeMillis()
+        if (msg.statusCode in 200..299 && !registered) {
+            registered = true
+            lastRegisterTime = lastServerResponseTime
+            uiLog("Connected to $serverDomain (IP auth)")
+            registrationLatch?.countDown()
+            listener?.onRegistered()
+        } else if (msg.statusCode !in 200..299 && ipAuthMode) {
+            uiLog("OPTIONS unexpected response: ${msg.statusCode}")
+            registrationLatch?.countDown()
+        }
+    }
 
     /**
      * Send REGISTER and wait for receiveLoop() to handle the response.
@@ -465,7 +503,7 @@ class SipClient(
             try {
                 if (!registered) {
                     uiLog("Not registered, attempting re-registration (backoff ${reregBackoff / 1000}s)")
-                    val ok = register()
+                    val ok = if (ipAuthMode) registerViaKeepalive() else register()
                     if (ok) {
                         reregBackoff = 10_000L
                         keepaliveFailures = 0
@@ -502,7 +540,7 @@ class SipClient(
                 if (registered && System.currentTimeMillis() - lastRegisterTime > 50 * 60 * 1000) {
                     uiLog("Periodic re-registration")
                     registered = false
-                    register()
+                    if (ipAuthMode) registerViaKeepalive() else register()
                 }
             } catch (e: Exception) {
                 uiLog("Monitor error: ${e.message}")

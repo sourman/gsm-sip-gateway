@@ -20,6 +20,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import com.callagent.gateway.R
+import com.callagent.gateway.SipConfig
 import com.callagent.gateway.service.GatewayService
 
 class SettingsFragment : Fragment() {
@@ -86,21 +87,11 @@ class SettingsFragment : Fragment() {
     }
 
     private fun startGateway() {
-        val prefs = requireActivity().getSharedPreferences("gateway", Context.MODE_PRIVATE)
-        val server = prefs.getString("server", "") ?: ""
-        val port = prefs.getInt("port", 5060)
-        val user = prefs.getString("user", "") ?: ""
-        val pass = prefs.getString("pass", "") ?: ""
-        val localServer = prefs.getBoolean("local_server", false)
+        val cfg = SipConfig.resolve(SipConfig.openPrefs(requireActivity()))
 
-        if (server.isEmpty() || user.isEmpty()) {
-            (requireActivity() as GatewayHost).appendLog("ERROR: Open config and set server + username first")
-            return
-        }
-
-        GatewayService.start(requireContext(), server, port, user, pass, localServer)
+        GatewayService.start(requireContext(), cfg.server, cfg.port, cfg.user, cfg.pass, cfg.localServer)
         vm.setGatewayRunning(true)
-        (requireActivity() as GatewayHost).appendLog("Starting gateway: $user@$server:$port")
+        (requireActivity() as GatewayHost).appendLog("Starting gateway: ${cfg.user}@${cfg.server}:${cfg.port}")
     }
 
     private fun stopGateway() {
@@ -121,7 +112,8 @@ class SettingsFragment : Fragment() {
     }
 
     private fun showConfigDialog() {
-        val prefs = requireActivity().getSharedPreferences("gateway", Context.MODE_PRIVATE)
+        val prefs = SipConfig.openPrefs(requireActivity())
+        val cfg = SipConfig.resolve(prefs)
         val view = layoutInflater.inflate(R.layout.dialog_config, null)
 
         val etServer = view.findViewById<EditText>(R.id.etSipServer)
@@ -132,12 +124,12 @@ class SettingsFragment : Fragment() {
         val cbLocalServer = view.findViewById<CheckBox>(R.id.cbLocalServer)
         val btnLoadConfig = view.findViewById<Button>(R.id.btnLoadConfig)
 
-        etServer.setText(prefs.getString("server", "sip.callagent.pro"))
-        etPort.setText(prefs.getInt("port", 5060).toString())
-        etUser.setText(prefs.getString("user", ""))
-        etPassword.setText(prefs.getString("pass", ""))
-        cbAutoconnect.isChecked = prefs.getBoolean("autoconnect", true)
-        cbLocalServer.isChecked = prefs.getBoolean("local_server", false)
+        etServer.setText(cfg.server)
+        etPort.setText(cfg.port.toString())
+        etUser.setText(cfg.user)
+        etPassword.setText(cfg.pass)
+        cbAutoconnect.isChecked = cfg.autoconnect
+        cbLocalServer.isChecked = cfg.localServer
 
         btnLoadConfig.setOnClickListener {
             activeConfigDialog?.dismiss()
@@ -176,7 +168,7 @@ class SettingsFragment : Fragment() {
                 val jsonText = inputStream.bufferedReader().readText()
                 val json = org.json.JSONObject(jsonText)
 
-                val prefs = requireActivity().getSharedPreferences("gateway", Context.MODE_PRIVATE)
+                val prefs = SipConfig.openPrefs(requireActivity())
                 val editor = prefs.edit()
 
                 if (json.has("server")) editor.putString("server", json.getString("server"))

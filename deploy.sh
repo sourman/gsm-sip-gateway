@@ -7,6 +7,7 @@
 #   ./deploy.sh --no-build   # use existing gateway.apk
 #   ./deploy.sh -s SERIAL    # target a specific adb device
 #   ./deploy.sh --reboot     # full Magisk module reinstall + reboot
+#   ./deploy.sh --no-sip     # skip SharedPreferences SIP configure step
 #
 # Hot-swap updates the priv-app APK in-place. Use --reboot when the module
 # structure or privapp-permissions manifest changed (new permissions, paths).
@@ -24,6 +25,7 @@ TMP_APK="/data/local/tmp/Gateway.apk"
 
 NO_BUILD=false
 REBOOT=false
+NO_SIP=false
 ADB_SERIAL=""
 
 usage() {
@@ -34,6 +36,7 @@ usage() {
 while [ $# -gt 0 ]; do
     case "$1" in
         --no-build) NO_BUILD=true ;;
+        --no-sip)   NO_SIP=true ;;
         --reboot)   REBOOT=true ;;
         -s)
             shift
@@ -157,6 +160,15 @@ restart_gateway() {
     fi
 }
 
+configure_sip() {
+    echo ""
+    echo "=== Configuring SIP credentials ==="
+    local sip_args=()
+    [ -n "$ADB_SERIAL" ] && sip_args+=(-s "$ADB_SERIAL")
+    sip_args+=(--force)
+    "$SCRIPT_DIR/scripts/configure-sip.sh" "${sip_args[@]}"
+}
+
 full_reboot_deploy() {
     echo ""
     echo "=== Full Magisk module reinstall + reboot ==="
@@ -205,6 +217,9 @@ verify_root
 verify_module_installed
 hot_swap_apk
 verify_md5
+if [ "$NO_SIP" = false ]; then
+    configure_sip
+fi
 restart_gateway
 
 echo ""

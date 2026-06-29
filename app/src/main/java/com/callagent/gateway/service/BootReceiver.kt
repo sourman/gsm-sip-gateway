@@ -7,6 +7,7 @@ import android.os.Build
 import android.util.Log
 import com.callagent.gateway.MicCapabilityGuard
 import com.callagent.gateway.RootShell
+import com.callagent.gateway.SipConfig
 
 /**
  * Auto-starts the gateway service on device boot.
@@ -30,30 +31,25 @@ class BootReceiver : BroadcastReceiver() {
             // here gives extra lead time on cold boot before any call arrives.
             earlyPermissionSetup(context)
 
-            val prefs = context.getSharedPreferences("gateway", Context.MODE_PRIVATE)
-            if (!prefs.getBoolean("autoconnect", true)) {
+            val prefs = SipConfig.openPrefs(context)
+            if (!SipConfig.resolveAutoconnect(prefs)) {
                 Log.i(TAG, "Autoconnect disabled, skipping")
                 return
             }
-            val server = prefs.getString("server", "") ?: ""
-            val user = prefs.getString("user", "") ?: ""
+            val cfg = SipConfig.resolve(prefs)
 
-            if (server.isNotEmpty() && user.isNotEmpty()) {
+            if (SipConfig.isConfigured(prefs)) {
                 Log.i(TAG, "Config found, starting gateway from foreground trampoline")
                 Thread({
                     try {
                         RootShell.init()
                         if (!MicCapabilityGuard.launchRelaunchActivity(context.packageName)) {
                             Log.w(TAG, "Root relaunch failed, falling back to direct service start")
-                            val port = prefs.getInt("port", 5060)
-                            val pass = prefs.getString("pass", "") ?: ""
-                            GatewayService.start(context, server, port, user, pass)
+                            GatewayService.start(context, cfg.server, cfg.port, cfg.user, cfg.pass, cfg.localServer)
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "Foreground relaunch failed: ${e.message}")
-                        val port = prefs.getInt("port", 5060)
-                        val pass = prefs.getString("pass", "") ?: ""
-                        GatewayService.start(context, server, port, user, pass)
+                        GatewayService.start(context, cfg.server, cfg.port, cfg.user, cfg.pass, cfg.localServer)
                     }
                 }, "boot-relaunch").start()
             } else {

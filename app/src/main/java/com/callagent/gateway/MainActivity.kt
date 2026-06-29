@@ -338,33 +338,24 @@ class MainActivity : AppCompatActivity(), GatewayHost {
 
     /** Re-establish FGS from foreground so FOREGROUND_MICROPHONE capability sticks. */
     private fun relaunchGatewayForMicCapability() {
-        val prefs = getSharedPreferences("gateway", MODE_PRIVATE)
-        if (!prefs.getBoolean("autoconnect", true)) return
-        val server = prefs.getString("server", "") ?: ""
-        val user = prefs.getString("user", "") ?: ""
-        if (server.isEmpty() || user.isEmpty()) return
-        val port = prefs.getInt("port", 5060)
-        val pass = prefs.getString("pass", "") ?: ""
-        val localServer = prefs.getBoolean("local_server", false)
+        val cfg = SipConfig.resolve(SipConfig.openPrefs(this))
+        if (!cfg.autoconnect) return
         if (running || isGatewayServiceRunning()) {
-            GatewayService.relaunchFromForeground(this, server, port, user, pass, localServer)
+            GatewayService.relaunchFromForeground(this, cfg.server, cfg.port, cfg.user, cfg.pass, cfg.localServer)
         } else {
-            GatewayService.start(this, server, port, user, pass, localServer)
+            GatewayService.start(this, cfg.server, cfg.port, cfg.user, cfg.pass, cfg.localServer)
         }
     }
 
     private fun autoStartGateway() {
-        val prefs = getSharedPreferences("gateway", MODE_PRIVATE)
-        if (!prefs.getBoolean("autoconnect", true)) return
-        val server = prefs.getString("server", "") ?: ""
-        val user = prefs.getString("user", "") ?: ""
-        if (server.isEmpty() || user.isEmpty()) return
+        val cfg = SipConfig.resolve(SipConfig.openPrefs(this))
+        if (!cfg.autoconnect) return
         val wasRunning = running || isGatewayServiceRunning()
         relaunchGatewayForMicCapability()
         if (!wasRunning) {
             running = true
             vm.setGatewayRunning(running)
-            vm.appendLog("Auto-starting gateway: $user@$server:${prefs.getInt("port", 5060)}")
+            vm.appendLog("Auto-starting gateway: ${cfg.user}@${cfg.server}:${cfg.port}")
         } else {
             vm.appendLog("Re-launching gateway from foreground (mic capability)")
         }

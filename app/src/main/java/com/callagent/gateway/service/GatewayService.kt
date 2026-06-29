@@ -18,6 +18,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import com.callagent.gateway.BuildConfig
+import com.callagent.gateway.SipConfig
 import com.callagent.gateway.GatewayApp
 import com.callagent.gateway.MainActivity
 import com.callagent.gateway.MicCapabilityGuard
@@ -259,12 +260,14 @@ class GatewayService : Service() {
         outgoingDurationSec = totals.outDurationSec
         currentCallStart = 0L
 
-        val prefs = getSharedPreferences("gateway", MODE_PRIVATE)
-        val server = intent?.getStringExtra(EXTRA_SERVER) ?: prefs.getString("server", "sip.callagent.pro") ?: ""
-        val port = intent?.getIntExtra(EXTRA_PORT, 5060) ?: prefs.getInt("port", 5060)
-        val username = intent?.getStringExtra(EXTRA_USER) ?: prefs.getString("user", "") ?: ""
-        val password = intent?.getStringExtra(EXTRA_PASS) ?: prefs.getString("pass", "") ?: ""
-        val localServer = intent?.getBooleanExtra(EXTRA_LOCAL_SERVER, prefs.getBoolean("local_server", false)) ?: prefs.getBoolean("local_server", false)
+        val prefs = SipConfig.openPrefs(this)
+        val resolved = SipConfig.resolve(prefs)
+        val server = intent?.getStringExtra(EXTRA_SERVER)?.takeIf { it.isNotBlank() } ?: resolved.server
+        val port = intent?.getIntExtra(EXTRA_PORT, -1)?.takeIf { it > 0 } ?: resolved.port
+        val username = intent?.getStringExtra(EXTRA_USER)?.takeIf { it.isNotBlank() } ?: resolved.user
+        val password = intent?.getStringExtra(EXTRA_PASS) ?: resolved.pass
+        val localServer = intent?.getBooleanExtra(EXTRA_LOCAL_SERVER, resolved.localServer)
+            ?: resolved.localServer
 
         if (server.isEmpty() || username.isEmpty()) {
             Log.e(TAG, "Missing SIP configuration")
@@ -276,11 +279,11 @@ class GatewayService : Service() {
 
         // Save for restart
         prefs.edit()
-            .putString("server", server)
-            .putInt("port", port)
-            .putString("user", username)
-            .putString("pass", password)
-            .putBoolean("local_server", localServer)
+            .putString(SipConfig.KEY_SERVER, server)
+            .putInt(SipConfig.KEY_PORT, port)
+            .putString(SipConfig.KEY_USER, username)
+            .putString(SipConfig.KEY_PASS, password)
+            .putBoolean(SipConfig.KEY_LOCAL_SERVER, localServer)
             .apply()
 
         cfgServer = server

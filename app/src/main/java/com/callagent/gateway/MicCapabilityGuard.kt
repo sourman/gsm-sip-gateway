@@ -115,10 +115,7 @@ object MicCapabilityGuard {
     }
 
     private fun isAutoconnectConfigured(context: Context): Boolean {
-        val prefs = context.getSharedPreferences("gateway", Context.MODE_PRIVATE)
-        if (!prefs.getBoolean("autoconnect", true)) return false
-        val server = prefs.getString("server", "") ?: ""
-        val user = prefs.getString("user", "") ?: ""
-        return server.isNotEmpty() && user.isNotEmpty()
+        val prefs = SipConfig.openPrefs(context)
+        return SipConfig.resolveAutoconnect(prefs) && SipConfig.isConfigured(prefs)
     }
 }
