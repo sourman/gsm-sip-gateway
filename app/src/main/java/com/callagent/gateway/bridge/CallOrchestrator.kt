@@ -53,6 +53,8 @@ class CallOrchestrator(
     private var pendingRtpPort: Int = 0
     private var pendingPayloadType: Int = 0
     private var pendingLocalRtpPort: Int = 0
+    private var wiredRtpAddr: String? = null
+    private var wiredRtpPort: Int = 0
 
     // SIP call retry: if SIP fails while GSM is ringing, retry before giving up.
     // Transient network issues or socket races can kill the first attempt.
@@ -179,6 +181,12 @@ class CallOrchestrator(
             listener?.onStateChanged(bridgeState, "SIP retry $sipCallRetries/$maxSipRetries")
             activeSipCall = null
             sipClient.removeCall(call.callId)
+            pendingRtpAddr = null
+            pendingRtpPort = 0
+            activeRtpSession?.stop()
+            activeRtpSession = null
+            wiredRtpAddr = null
+            wiredRtpPort = 0
             // Retry after a short delay to let any transient issue settle
             Thread({
                 try { Thread.sleep(1000) } catch (_: InterruptedException) { return@Thread }
@@ -234,19 +242,26 @@ class CallOrchestrator(
                 pendingRtpAddr = null
 
                 if (addr != null && port > 0) {
-                    Thread({
-                        startRtp(localPort, addr, port, pt)
-                        // Guard: tearDown may have run while startRtp was blocking
-                        // (AudioRecord retries take 30+ seconds on cold boot).
-                        // Don't overwrite IDLE — that causes "Busy" on next call.
-                        if (bridgeState == BridgeState.IDLE || bridgeState == BridgeState.TEARING_DOWN) {
-                            Log.w(TAG, "Bridge torn down during RTP setup — not transitioning to BRIDGED")
-                            return@Thread
-                        }
+                    if (activeRtpSession != null) {
+                        pendingRtpAddr = null
                         bridgeState = BridgeState.BRIDGED
                         listener?.onStateChanged(bridgeState, "Bridged (inbound)")
-                        Log.i(TAG, "Inbound bridge established — zero dead air")
-                    }, "RTP-Start").start()
+                        Log.i(TAG, "Inbound bridge established — RTP already running")
+                    } else {
+                        Thread({
+                            startRtp(localPort, addr, port, pt)
+                            // Guard: tearDown may have run while startRtp was blocking
+                            // (AudioRecord retries take 30+ seconds on cold boot).
+                            // Don't overwrite IDLE — that causes "Busy" on next call.
+                            if (bridgeState == BridgeState.IDLE || bridgeState == BridgeState.TEARING_DOWN) {
+                                Log.w(TAG, "Bridge torn down during RTP setup — not transitioning to BRIDGED")
+                                return@Thread
+                            }
+                            bridgeState = BridgeState.BRIDGED
+                            listener?.onStateChanged(bridgeState, "Bridged (inbound)")
+                            Log.i(TAG, "Inbound bridge established — zero dead air")
+                        }, "RTP-Start").start()
+                    }
                 } else {
                     // Edge case: GSM answered but SIP RTP info not ready yet.
                     // This shouldn't happen in normal flow since we answer GSM
@@ -357,15 +372,19 @@ class CallOrchestrator(
                     Log.i(TAG, "Dialler bridge established (codec=$codecName)")
                 }, "RTP-Start").start()
             } else {
-                // INBOUND flow: SIP/agent answered — save RTP info and answer GSM.
-                // When GSM goes active (onGsmCallActive), RTP starts immediately
-                // so the caller hears the agent from the first moment.
+                // INBOUND flow: start RTP immediately so SignalWire sees media
+                // (it drops calls without RTP within ~500ms).  Answer GSM in
+                // parallel; onGsmCallActive marks BRIDGED once GSM is active.
                 pendingRtpAddr = remoteRtpAddr
                 pendingRtpPort = remoteRtpPort
                 pendingPayloadType = payloadType
                 pendingLocalRtpPort = call.localRtpPort
 
-                Log.i(TAG, "SIP answered (codec=$codecName) — answering GSM call now")
+                Log.i(TAG, "SIP answered (codec=$codecName) — starting RTP early, answering GSM")
+                val localRtpPort = call.localRtpPort
+                Thread({
+                    startRtp(localRtpPort, remoteRtpAddr, remoteRtpPort, payloadType)
+                }, "RTP-Early").start()
                 activeGsmCall?.let { GsmCallManager.answerCall(it) }
                     ?: Log.e(TAG, "SIP answered but no active GSM call to answer!")
             }
@@ -377,10 +396,33 @@ class CallOrchestrator(
             bridgeState = BridgeState.BRIDGED
             listener?.onStateChanged(bridgeState, "Bridged (inbound)")
             Log.i(TAG, "Bridge established (codec=$codecName)")
+        } else if (bridgeState == BridgeState.BRIDGED) {
+            if (sameRtpEndpoint(remoteRtpAddr, remoteRtpPort)) {
+                Log.i(TAG, "RTP endpoint unchanged while bridged — ignoring (codec=$codecName)")
+                return
+            }
+            if (activeRtpSession == null) {
+                Log.i(TAG, "RTP ready while BRIDGED but session not wired — attaching now (codec=$codecName)")
+                val localRtpPort = call.localRtpPort
+                Thread({
+                    startRtp(localRtpPort, remoteRtpAddr, remoteRtpPort, payloadType)
+                    if (bridgeState == BridgeState.IDLE || bridgeState == BridgeState.TEARING_DOWN) {
+                        Log.w(TAG, "Bridge torn down during late RTP setup")
+                        return@Thread
+                    }
+                    listener?.onStateChanged(bridgeState, "RTP attached (late)")
+                    Log.i(TAG, "Late RTP attached (codec=$codecName)")
+                }, "RTP-Late").start()
+            } else {
+                Log.i(TAG, "RTP endpoint update while already bridged — restarting session (codec=$codecName)")
+                val localRtpPort = call.localRtpPort
+                Thread({
+                    startRtp(localRtpPort, remoteRtpAddr, remoteRtpPort, payloadType)
+                }, "RTP-Update").start()
+            }
         } else {
             Log.w(TAG, "onRtpReady ignored — bridgeState=$bridgeState (expected SIP_CALLING or SIP_RINGING)")
             listener?.onError("RTP ready but bridge state wrong: $bridgeState")
-            Log.i(TAG, "Inbound bridge established — GSM was already active (codec=$codecName)")
         }
     }
 
@@ -508,6 +550,12 @@ class CallOrchestrator(
         }
         session.start()
         activeRtpSession = session
+        wiredRtpAddr = remoteAddr
+        wiredRtpPort = remotePort
+    }
+
+    private fun sameRtpEndpoint(addr: String, port: Int): Boolean {
+        return activeRtpSession != null && wiredRtpAddr == addr && wiredRtpPort == port
     }
 
     // ── Teardown ────────────────────────────────────────
@@ -522,6 +570,8 @@ class CallOrchestrator(
         try {
             activeRtpSession?.stop()
             activeRtpSession = null
+            wiredRtpAddr = null
+            wiredRtpPort = 0
 
             activeSipCall?.let {
                 try {

@@ -378,6 +378,14 @@ class SipClient(
 
     private fun handleIncomingInvite(msg: SipMessage, address: Pair<String, Int>) {
         val callId = msg.callId ?: return
+
+        // Duplicate INVITE for an active dialog — re-answer instead of creating a new call.
+        activeCalls[callId]?.let { existing ->
+            Log.i(TAG, "Duplicate INVITE for active call $callId — handing to dialog")
+            existing.handleMessage(msg)
+            return
+        }
+
         Log.i(TAG, "Incoming INVITE call-id=$callId from=${msg.callerNumber}")
 
         // Send 100 Trying

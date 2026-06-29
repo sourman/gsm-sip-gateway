@@ -46,6 +46,8 @@ class SipCall(
     var remoteRtpPort: Int = 0
     var remoteRtpAddress: String? = null
     var negotiatedPayloadType: Int = 8 // default PCMA, updated from SDP
+    /** True once [Listener.onRtpReady] has been invoked for the current remote endpoint */
+    @Volatile private var rtpNotified = false
 
     // Caller info (for inbound and outbound caller-ID)
     var callerNumber: String? = null
@@ -88,24 +90,37 @@ class SipCall(
                 val ackCseq = msg.cseq?.split(" ")?.firstOrNull()?.toIntOrNull() ?: localCseq
                 sendAck(ackCseq)
 
-                // Guard against duplicate 200 OK (Asterisk retransmits until ACK)
+                // Guard against duplicate 200 OK (server retransmits until ACK).
+                // Still notify on late/retransmitted SDP — SignalWire may send RTP
+                // details only on the retransmit after the bridge is already BRIDGED.
                 if (state == State.ANSWERED) {
                     Log.i(TAG, "Duplicate 200 OK for call $callId (already answered), ACKed")
+                    notifyRtpReady()
                     return true
                 }
 
                 Log.i(TAG, "SDP codec: pt=$negotiatedPayloadType codecs=${msg.sdpCodecs}")
                 state = State.ANSWERED
-
-                val addr = remoteRtpAddress ?: remoteContactAddress?.first
-                Log.i(TAG, "200 OK RTP: addr=$addr port=$remoteRtpPort listener=${listener != null}")
-                if (addr != null && remoteRtpPort > 0) {
-                    listener?.onRtpReady(this, addr, remoteRtpPort, negotiatedPayloadType)
-                } else {
-                    Log.w(TAG, "200 OK missing RTP info — addr=$addr port=$remoteRtpPort, cannot bridge")
-                    sipClient.logListener?.invoke("200 OK missing RTP: addr=$addr port=$remoteRtpPort")
-                }
+                notifyRtpReady()
                 listener?.onCallAnswered(this)
+                return true
+            }
+
+            // In-dialog re-INVITE (session update with new SDP after initial answer)
+            msg.isRequest && msg.method == "INVITE" && state == State.ANSWERED -> {
+                Log.i(TAG, "In-dialog re-INVITE for call $callId")
+                msg.sdpRtpPort?.let { remoteRtpPort = it }
+                msg.sdpAddress?.let { remoteRtpAddress = it }
+                negotiatedPayloadType = msg.sdpPreferredPayloadType
+                rtpNotified = false
+
+                val ok = SipBuilder.ok200(
+                    msg, sipClient.username, sipClient.publicIp, sipClient.localPort,
+                    localRtpPort = localRtpPort.takeIf { it > 0 },
+                    toTag = remoteTag ?: localTag
+                )
+                sipClient.sendResponse(ok, remoteContactAddress ?: sipClient.serverAddress)
+                notifyRtpReady()
                 return true
             }
 
@@ -251,6 +266,18 @@ class SipCall(
         state = State.TERMINATED
         Log.i(TAG, "Sent BYE for call $callId")
         listener?.onCallTerminated(this)
+    }
+
+    private fun notifyRtpReady() {
+        val addr = remoteRtpAddress ?: remoteContactAddress?.first
+        Log.i(TAG, "RTP notify: addr=$addr port=$remoteRtpPort listener=${listener != null} notified=$rtpNotified")
+        if (addr != null && remoteRtpPort > 0) {
+            listener?.onRtpReady(this, addr, remoteRtpPort, negotiatedPayloadType)
+            rtpNotified = true
+        } else if (!rtpNotified) {
+            Log.w(TAG, "SDP missing RTP info — addr=$addr port=$remoteRtpPort, cannot bridge")
+            sipClient.logListener?.invoke("SDP missing RTP: addr=$addr port=$remoteRtpPort")
+        }
     }
 
     companion object {
