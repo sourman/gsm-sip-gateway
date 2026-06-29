@@ -51,15 +51,17 @@ adb shell su -c "md5sum /system/priv-app/Gateway/Gateway.apk"   # must match
 
 1. **Declare + allowlist `CALL_AUDIO_INTERCEPTION`.** The permission is `signature|privileged|role` and reachable via the privileged path. It must be in `AndroidManifest.xml` **and** in the Magisk privapp-permissions allowlist (`magisk/system/etc/permissions/privapp-permissions-gateway.xml`). Without it, capture relies on a legacy `CAPTURE_AUDIO_OUTPUT` fallback that AOSP intends to remove.
 
-2. **Start the foreground service while the app is foreground.** `RECORD_AUDIO`'s UID appop mode defaults to `MODE_FOREGROUND`, and `AppOpsService.evalMode` returns `MODE_IGNORED` unless the app holds `PROCESS_CAPABILITY_FOREGROUND_MICROPHONE`. That capability only sticks for the FGS lifetime if the FGS was started while the app was foreground — otherwise the screen-off demotion to `PROCESS_STATE_IMPORTANT_FOREGROUND` (procState 4) drops the M bit and re-silences. `MainActivity` calls `GatewayService.relaunchFromForeground(...)` during onboarding to fix this; a cold start from `BootReceiver` with the screen off would *not* un-silence. (Starting from `PROCESS_STATE_TOP` also un-silences, but is unsuitable for a headless gateway.)
+2. **Start the foreground service while the app is foreground.** `RECORD_AUDIO`'s UID appop mode defaults to `MODE_FOREGROUND`, and `AppOpsService.evalMode` returns `MODE_IGNORED` unless the app holds `PROCESS_CAPABILITY_FOREGROUND_MICROPHONE`. That capability only sticks for the FGS lifetime if the FGS was started while the app was foreground — otherwise the screen-off demotion to `PROCESS_STATE_IMPORTANT_FOREGROUND` (procState 4) drops the M bit and re-silences. `MicCapabilityGuard` handles this headlessly: `BootReceiver` root-launches `MainActivity` with `EXTRA_MIC_CAPABILITY_RELAUNCH` (invisible trampoline via `am start`), which calls `GatewayService.relaunchFromForeground(...)` and then finishes. `GatewayService` also checks on start and runs a periodic monitor. Onboarding still relaunches from `MainActivity` for the first manual setup.
 
 This is the difference between live audio and silence. Verify after a build:
 
 ```bash
-adb shell dumpsys audio | grep "src:VOICE_CALL" | tail -2   # expect "not silenced"
+adb reboot && adb wait-for-device && sleep 45   # cold boot — do NOT open app manually
 adb shell dumpsys activity processes | grep -A25 "com.callagent" | grep curCapability
-# expect --MNFUATI or LCMNFUATI (M present) during a background call
+# expect --MNFUATI (M present) with screen off, no manual app open
+adb shell dumpsys audio | grep "src:VOICE_CALL" | tail -2   # expect "not silenced" during a call
 adb shell dumpsys package com.callagent.gateway | grep CALL_AUDIO_INTERCEPTION   # granted=true
+adb logcat -d -s MicCapabilityGuard:* BootReceiver:* | tail -20   # root relaunch trail
 ```
 
 `VOICE_DOWNLINK` is never policy-silenced (it bypasses the appop check), but on the Pixel 7 it routes to an empty capture device at the HAL level — the native-ALSA bypass exists for direct downlink capture independent of this path.
