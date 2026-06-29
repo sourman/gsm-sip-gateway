@@ -302,7 +302,22 @@ twilio api:core:calls:recordings:list --call-sid=CA...
 ./scripts/download-recording.sh RE... recordings/twilio-e2e.wav
 ```
 
-**2026-06-29 result (partial pass):**
+**2026-06-29 result (post RTP fix — partial pass):**
+
+| Check | Result |
+|-------|--------|
+| GSM inbound from Twilio | ✓ `GSM_RINGING` from +17402185427 |
+| SIP INVITE to SignalWire | ✓ `Sent INVITE` → `loomli-gsm-gateway.dapp.signalwire.com` |
+| SignalWire SWML fetch | ✓ `POST /swml` HTTP 200 |
+| Gateway BRIDGED | ✓ single `Starting RTP` (no duplicate restarts) |
+| OpenAI webhook | ✓ `POST /` → `realtime.call.incoming` + `Accepted` (`rtc_u1_DwCoFjKD48NfcAFMjU7y1`) |
+| Call duration | ~15s bridged (`CAe0034b86df9b0b016bb0be2c39456d7a`) |
+| capRMS | ✓ TX#1 `capRMS=79` (OpenAI TTS on SIP leg) |
+| Twilio recording | ✗ no `--record` on this run; prior runs: `RE15e42011…` 4s |
+
+Fixes deployed (`bdc4c4e`, `dbc32b0`): handle `onRtpReady` when `bridgeState=BRIDGED`, start RTP early on inbound SIP answer, dedupe duplicate 200 OK / re-INVITE SDP without tearing down active capture.
+
+**2026-06-29 result (pre-fix — failed):**
 
 | Check | Result |
 |-------|--------|
@@ -341,7 +356,21 @@ Self-call smoke test (no gateway, verifies number + SWML routing):
 # wrangler tail: POST /outbound-test-swml (outbound leg) + POST /swml (inbound leg)
 ```
 
-**2026-06-29 result:**
+**2026-06-29 result (post verification + RTP fix):**
+
+| Check | Result |
+|-------|--------|
+| Gateway SIM verified | ✓ `verify-number.sh --list` → `verified=True` |
+| Outbound → gateway SIM | ✓ Call SID queued (`debdb000…`, `cf5ec70b…`) |
+| SWML endpoints | ✓ `POST /outbound-test-swml` + `POST /swml` |
+| OpenAI webhook | ✓ `Accepted call_id=rtc_u2_DwCqAMSmGMtT0SpR61Dmx` from +12015029074 |
+| Gateway BRIDGED | ✓ single RTP session, duplicate 200 OK ignored |
+| Call duration | ~6–7s (PSTN leg drops before 60s pause completes) |
+| capRMS | ✗ 0 on PSTN pause leg (silence); brief `capRMS=2332` on pre-dedup run |
+
+SignalWire-owned PSTN → gateway → Domain App → OpenAI path is end-to-end connected. Short call duration on the SignalWire outbound leg is likely downstream (PSTN/SIP bridge or OpenAI session idle timeout with no speech on the pause TwiML leg), not the prior `onRtpReady ignored` race.
+
+**2026-06-29 result (pre-verification):**
 
 | Check | Result |
 |-------|--------|
@@ -382,8 +411,8 @@ Twilio trial symmetrically blocks calls **to** unverified numbers (e.g. new Sign
 1. ~~Add `SIGNALWIRE_SPACE` and `SIGNALWIRE_PROJECT_ID` to `.env`~~ — done; `./scripts/signalwire/check-auth.sh` reports `auth: ok`.
 2. ~~**Create Domain App**~~ — done via `./scripts/signalwire/create-domain-app.sh` → `loomli-gsm-gateway.dapp.signalwire.com`, SWML → `https://sip-webhook.loom.li/swml`.
 3. ~~Point gateway SIP settings at the Domain App FQDN~~ — done; gateway registers to SignalWire.
-4. ~~Place test call~~ — Twilio path partial (see [Phase 1](#phase-1--twilio--gsm-gateway--signalwire-domain-app--openai)); fix RTP race + reach OpenAI `POST /`.
-5. Verify gateway SIM on SignalWire (`verify-number.sh`); re-run `outbound-call-test.sh` for full SignalWire-owned PSTN leg.
+4. ~~Place test call~~ — Twilio path reaches OpenAI (`Accepted`); SignalWire outbound path connected but PSTN leg ~6s (see [Phase 1](#phase-1--twilio--gsm-gateway--signalwire-domain-app--openai) / [Phase 2](#phase-2--signalwire-phone-number)).
+5. ~~Verify gateway SIM on SignalWire~~ — done (`+16479163598 verified=True`); outbound E2E reaches OpenAI.
 6. Add `scripts/signalwire/download-recording.sh` (SignalWire recording API) as Twilio script parallel.
 7. Retire Twilio trunk only after SignalWire path matches recording + bidirectional audio evidence.
 
