@@ -55,6 +55,9 @@ class CallOrchestrator(
     private var pendingLocalRtpPort: Int = 0
     private var wiredRtpAddr: String? = null
     private var wiredRtpPort: Int = 0
+    /** Endpoint we have committed to (or are starting) — blocks duplicate startRtp */
+    @Volatile private var rtpTargetAddr: String? = null
+    @Volatile private var rtpTargetPort: Int = 0
 
     // SIP call retry: if SIP fails while GSM is ringing, retry before giving up.
     // Transient network issues or socket races can kill the first attempt.
@@ -187,6 +190,8 @@ class CallOrchestrator(
             activeRtpSession = null
             wiredRtpAddr = null
             wiredRtpPort = 0
+            rtpTargetAddr = null
+            rtpTargetPort = 0
             // Retry after a short delay to let any transient issue settle
             Thread({
                 try { Thread.sleep(1000) } catch (_: InterruptedException) { return@Thread }
@@ -242,12 +247,13 @@ class CallOrchestrator(
                 pendingRtpAddr = null
 
                 if (addr != null && port > 0) {
-                    if (activeRtpSession != null) {
+                    if (activeRtpSession != null || isRtpTarget(addr, port)) {
                         pendingRtpAddr = null
                         bridgeState = BridgeState.BRIDGED
                         listener?.onStateChanged(bridgeState, "Bridged (inbound)")
                         Log.i(TAG, "Inbound bridge established — RTP already running")
                     } else {
+                        markRtpTarget(addr, port)
                         Thread({
                             startRtp(localPort, addr, port, pt)
                             // Guard: tearDown may have run while startRtp was blocking
@@ -351,6 +357,17 @@ class CallOrchestrator(
         }
         Log.i(TAG, "RTP ready: $remoteRtpAddr:$remoteRtpPort codec=$codecName bridgeState=$bridgeState")
 
+        if (isRtpTarget(remoteRtpAddr, remoteRtpPort)) {
+            if (bridgeState == BridgeState.SIP_CALLING && GsmCallManager.isCallActive) {
+                bridgeState = BridgeState.BRIDGED
+                listener?.onStateChanged(bridgeState, "Bridged (inbound)")
+                Log.i(TAG, "Inbound bridge established — RTP already starting (codec=$codecName)")
+            } else {
+                Log.i(TAG, "RTP endpoint unchanged — ignoring duplicate notify (codec=$codecName)")
+            }
+            return
+        }
+
         if (bridgeState == BridgeState.SIP_CALLING || bridgeState == BridgeState.SIP_RINGING) {
             // Check if GSM is already active (dialler-initiated calls).
             // For inbound calls GSM is still ringing — answer it and wait for
@@ -360,6 +377,7 @@ class CallOrchestrator(
 
             if (gsmAlreadyActive) {
                 Log.i(TAG, "SIP answered (codec=$codecName) — GSM already active, starting RTP now")
+                markRtpTarget(remoteRtpAddr, remoteRtpPort)
                 val localRtpPort = call.localRtpPort
                 Thread({
                     startRtp(localRtpPort, remoteRtpAddr, remoteRtpPort, payloadType)
@@ -381,6 +399,7 @@ class CallOrchestrator(
                 pendingLocalRtpPort = call.localRtpPort
 
                 Log.i(TAG, "SIP answered (codec=$codecName) — starting RTP early, answering GSM")
+                markRtpTarget(remoteRtpAddr, remoteRtpPort)
                 val localRtpPort = call.localRtpPort
                 Thread({
                     startRtp(localRtpPort, remoteRtpAddr, remoteRtpPort, payloadType)
@@ -391,18 +410,20 @@ class CallOrchestrator(
         } else if (bridgeState == BridgeState.GSM_ANSWERED) {
             // Edge case: GSM was already answered (e.g. user picked up manually)
             // before SIP was ready.  Start RTP now.
+            markRtpTarget(remoteRtpAddr, remoteRtpPort)
             val localRtpPort = call.localRtpPort
             startRtp(localRtpPort, remoteRtpAddr, remoteRtpPort, payloadType)
             bridgeState = BridgeState.BRIDGED
             listener?.onStateChanged(bridgeState, "Bridged (inbound)")
             Log.i(TAG, "Bridge established (codec=$codecName)")
         } else if (bridgeState == BridgeState.BRIDGED) {
-            if (sameRtpEndpoint(remoteRtpAddr, remoteRtpPort)) {
+            if (isRtpTarget(remoteRtpAddr, remoteRtpPort)) {
                 Log.i(TAG, "RTP endpoint unchanged while bridged — ignoring (codec=$codecName)")
                 return
             }
             if (activeRtpSession == null) {
                 Log.i(TAG, "RTP ready while BRIDGED but session not wired — attaching now (codec=$codecName)")
+                markRtpTarget(remoteRtpAddr, remoteRtpPort)
                 val localRtpPort = call.localRtpPort
                 Thread({
                     startRtp(localRtpPort, remoteRtpAddr, remoteRtpPort, payloadType)
@@ -415,6 +436,7 @@ class CallOrchestrator(
                 }, "RTP-Late").start()
             } else {
                 Log.i(TAG, "RTP endpoint update while already bridged — restarting session (codec=$codecName)")
+                markRtpTarget(remoteRtpAddr, remoteRtpPort)
                 val localRtpPort = call.localRtpPort
                 Thread({
                     startRtp(localRtpPort, remoteRtpAddr, remoteRtpPort, payloadType)
@@ -504,6 +526,8 @@ class CallOrchestrator(
 
     private fun startRtp(localPort: Int, remoteAddr: String, remotePort: Int,
                          payloadType: Int = RtpPacket.PT_PCMA) {
+        wiredRtpAddr = remoteAddr
+        wiredRtpPort = remotePort
         // Re-assert RECORD_AUDIO appops SYNCHRONOUSLY before AudioRecord
         // creation.  Must complete before RtpSession.start() so AudioFlinger
         // sees "allow" when the record thread begins reading.  Running async
@@ -550,12 +574,15 @@ class CallOrchestrator(
         }
         session.start()
         activeRtpSession = session
-        wiredRtpAddr = remoteAddr
-        wiredRtpPort = remotePort
     }
 
-    private fun sameRtpEndpoint(addr: String, port: Int): Boolean {
-        return activeRtpSession != null && wiredRtpAddr == addr && wiredRtpPort == port
+    private fun isRtpTarget(addr: String, port: Int): Boolean {
+        return rtpTargetAddr == addr && rtpTargetPort == port
+    }
+
+    private fun markRtpTarget(addr: String, port: Int) {
+        rtpTargetAddr = addr
+        rtpTargetPort = port
     }
 
     // ── Teardown ────────────────────────────────────────
@@ -572,6 +599,8 @@ class CallOrchestrator(
             activeRtpSession = null
             wiredRtpAddr = null
             wiredRtpPort = 0
+            rtpTargetAddr = null
+            rtpTargetPort = 0
 
             activeSipCall?.let {
                 try {
