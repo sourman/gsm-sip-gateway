@@ -80,6 +80,24 @@ const worker = {
       return swmlBridgeResponse(env);
     }
 
+    // SWML for SignalWire outbound PSTN test calls: hold the A-leg while the
+    // gateway bridges GSM → SIP Domain App → OpenAI (same role as Twilio Pause).
+    if (
+      (request.method === "GET" || request.method === "POST") &&
+      url.pathname === "/outbound-test-swml"
+    ) {
+      const swml = {
+        version: "1.0.0",
+        sections: {
+          main: [{ pause: { length: 60 } }],
+        },
+      };
+      return new Response(JSON.stringify(swml), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
     // Recording status callback: log the recording URL for evidence collection.
     if (request.method === "POST" && url.pathname === "/recording") {
       const form = await request.formData();
