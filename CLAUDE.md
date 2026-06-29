@@ -28,9 +28,22 @@ Install the Magisk module (`gateway-magisk.zip`) via Magisk Manager, reboot, set
 
 ## Redeploying after a code change
 
-The app is installed as a Magisk **system priv-app**, so `adb install gateway.apk` fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (signature mismatch). Reinstall the module instead, then reboot so the overlay swaps the system APK:
+The app is installed as a Magisk **system priv-app**, so `adb install gateway.apk` fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (signature mismatch).
+
+**Primary dev loop — hot-deploy (no reboot):** copy the new APK into the live module overlay and restart the service:
 
 ```bash
+./deploy.sh              # build release + hot-swap
+./deploy.sh --no-build   # skip build when gateway.apk already exists
+```
+
+`deploy.sh` pushes to `/data/adb/modules/sip-gsm-gateway/system/priv-app/Gateway/Gateway.apk`, verifies MD5 against `/system/priv-app/Gateway/Gateway.apk`, force-stops the app, and root-launches the `MicCapabilityGuard` foreground trampoline to restart `GatewayService`.
+
+**Full module reinstall + reboot** — only when module structure or privapp-permissions changed (new permissions, manifest paths, tinymix binary, etc.):
+
+```bash
+./deploy.sh --reboot
+# equivalent manual path:
 adb push gateway-magisk.zip /data/local/tmp/
 adb shell su -c "magisk --install-module /data/local/tmp/gateway-magisk.zip"
 adb reboot
