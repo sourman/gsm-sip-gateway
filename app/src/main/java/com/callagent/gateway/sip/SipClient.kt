@@ -183,6 +183,12 @@ class SipClient(
     private fun handlePacket(data: String, address: Pair<String, Int>) {
         val msg = SipMessage.parse(data) ?: return
 
+        // Any SIP response from the server proves the path is alive — not just
+        // OPTIONS/REGISTER (INVITE 200 during a bridged call must count too).
+        if (msg.isResponse) {
+            lastServerResponseTime = System.currentTimeMillis()
+        }
+
         // OPTIONS keepalive from server
         if (msg.isRequest && msg.method == "OPTIONS") {
             val resp = SipBuilder.optionsResponse(msg, username, publicIp, localPort)
@@ -531,8 +537,11 @@ class SipClient(
                     // to prevent NAT binding expiration on the SIP port
                     sendOptions()
                     Thread.sleep(5_000)
-                    // Check if we got any response from the server recently
-                    if (registered && System.currentTimeMillis() - lastServerResponseTime > 60_000) {
+                    // Active call traffic (INVITE 200, RTP) proves liveness — don't
+                    // tear down a bridged call because OPTIONS went unanswered.
+                    if (activeCalls.isNotEmpty()) {
+                        keepaliveFailures = 0
+                    } else if (registered && System.currentTimeMillis() - lastServerResponseTime > 60_000) {
                         keepaliveFailures++
                         if (keepaliveFailures >= maxKeepaliveFailures) {
                             uiLog("Keepalive failed $keepaliveFailures times, connection lost")

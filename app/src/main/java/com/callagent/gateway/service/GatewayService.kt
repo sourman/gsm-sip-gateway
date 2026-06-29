@@ -441,7 +441,14 @@ class GatewayService : Service() {
 
         sip.logListener = { msg -> broadcastLog("SIP: $msg") }
         GsmCallManager.logCallback = { msg -> broadcastLog("AUDIO: $msg") }
-        sip.onConnectionLost = { reconnect() }
+        sip.onConnectionLost = {
+            if (isCallActive()) {
+                Log.i(TAG, "SIP connection lost signal ignored — call in progress")
+                broadcastLog("SIP keepalive lost (ignored — call active)")
+            } else {
+                reconnect()
+            }
+        }
 
         try {
             sip.start()

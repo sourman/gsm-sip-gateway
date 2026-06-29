@@ -233,7 +233,7 @@ describe("worker fetch /outbound-test", () => {
     );
     expect(res.status).toBe(200);
     const xml = await res.text();
-    expect(xml).toContain("<Play>https://demo.twilio.com/docs/classic.mp3</Play>");
+    expect(xml).toContain("<Play>https://sip-webhook.loom.li/sample-speech-1m.mp3</Play>");
   });
 });
 

@@ -32,7 +32,7 @@ const worker = {
     // Workarounds: pass inline TwiML via `twilio api:core:calls:create --twiml=...`,
     // use Twilio's voice_play_audio template URL, or upgrade the account.
     if (request.method === "GET" && url.pathname === "/outbound-test") {
-      const mp3 = "https://demo.twilio.com/docs/classic.mp3";
+      const mp3 = `https://${url.host}/sample-speech-1m.mp3`;
       const twiml =
         `<?xml version="1.0" encoding="UTF-8"?>\n` +
         `<Response>\n` +
@@ -86,10 +86,14 @@ const worker = {
       (request.method === "GET" || request.method === "POST") &&
       url.pathname === "/outbound-test-swml"
     ) {
+      const mp3 = `https://${url.host}/sample-speech-1m.mp3`;
       const swml = {
         version: "1.0.0",
         sections: {
-          main: [{ pause: { length: 60 } }],
+          main: [
+            { play: { urls: [mp3] } },
+            { pause: { length: 30 } },
+          ],
         },
       };
       return new Response(JSON.stringify(swml), {
