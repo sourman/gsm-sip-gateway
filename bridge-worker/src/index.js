@@ -15,7 +15,7 @@ const INSTRUCTIONS =
 
 const GREETING = "Hello! This is the OpenAI Realtime test endpoint. Go ahead, I'm listening.";
 
-export default {
+const worker = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
@@ -236,3 +236,12 @@ function constantTimeEqual(a, b) {
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
 }
+
+export default worker;
+
+export {
+  verifyWebhook,
+  base64Encode,
+  base64Decode,
+  constantTimeEqual,
+};
