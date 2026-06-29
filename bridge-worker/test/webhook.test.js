@@ -183,6 +183,47 @@ describe("worker fetch /twiml", () => {
   });
 });
 
+describe("worker fetch /swml", () => {
+  const env = {
+    OPENAI_PROJECT_ID: "proj_Cy8aafQOE2xGPfAh45zFq0VG",
+  };
+
+  it("returns SWML connect to OpenAI SIP on GET", async () => {
+    const res = await worker.fetch(
+      new Request("https://sip-webhook.loom.li/swml"),
+      env,
+      { waitUntil() {} },
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("application/json");
+    const swml = await res.json();
+    expect(swml.version).toBe("1.0.0");
+    expect(swml.sections.main[0]).toEqual({
+      record_call: { format: "wav", stereo: true },
+    });
+    expect(swml.sections.main[1]).toEqual({
+      connect: {
+        to: `sip:${env.OPENAI_PROJECT_ID}@sip.api.openai.com;transport=tls`,
+      },
+    });
+  });
+
+  it("returns SWML on POST (SignalWire document fetch)", async () => {
+    const res = await worker.fetch(
+      new Request("https://sip-webhook.loom.li/swml", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }),
+      env,
+      { waitUntil() {} },
+    );
+    expect(res.status).toBe(200);
+    const swml = await res.json();
+    expect(swml.sections.main[1].connect.to).toContain("@sip.api.openai.com");
+  });
+});
+
 describe("worker fetch /outbound-test", () => {
   it("plays the sample MP3 on the PSTN leg", async () => {
     const res = await worker.fetch(

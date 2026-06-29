@@ -25,11 +25,11 @@ if [[ "$missing" -ne 0 ]]; then
   exit 1
 fi
 
-host="${SIGNALWIRE_SPACE%.signalwire.com}.signalwire.com"
-url="https://${host}/api/relay/rest/endpoints"
+host="${SIGNALWIRE_SPACE}.signalwire.com"
+url="https://${host}/api/relay/rest/domain_applications"
 
 echo ""
-echo "=== REST probe (GET /api/relay/rest/endpoints) ==="
+echo "=== REST probe (GET /api/relay/rest/domain_applications) ==="
 http_code="$(curl -sS -o /dev/null -w '%{http_code}' \
   -u "${PROJECT_ID}:${REST_API_TOKEN}" \
   -H 'Accept: application/json' \

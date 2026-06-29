@@ -71,6 +71,15 @@ const worker = {
       });
     }
 
+    // SWML for SignalWire Domain Apps: record + connect to OpenAI Realtime SIP.
+    // SignalWire fetches SWML via POST; GET is supported for manual curl checks.
+    if (
+      (request.method === "GET" || request.method === "POST") &&
+      url.pathname === "/swml"
+    ) {
+      return swmlBridgeResponse(env);
+    }
+
     // Recording status callback: log the recording URL for evidence collection.
     if (request.method === "POST" && url.pathname === "/recording") {
       const form = await request.formData();
@@ -159,6 +168,27 @@ const worker = {
     return new Response("", { status: 200 });
   },
 };
+
+function swmlBridgeResponse(env) {
+  const projectId = env.OPENAI_PROJECT_ID;
+  if (!projectId) {
+    return new Response("OPENAI_PROJECT_ID not configured", { status: 500 });
+  }
+  const sipUri = `sip:${projectId}@sip.api.openai.com;transport=tls`;
+  const swml = {
+    version: "1.0.0",
+    sections: {
+      main: [
+        { record_call: { format: "wav", stereo: true } },
+        { connect: { to: sipUri } },
+      ],
+    },
+  };
+  return new Response(JSON.stringify(swml), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 async function monitorSession(callId, env) {
   await new Promise((r) => setTimeout(r, 250));
@@ -309,4 +339,5 @@ export {
   base64Encode,
   base64Decode,
   constantTimeEqual,
+  swmlBridgeResponse,
 };

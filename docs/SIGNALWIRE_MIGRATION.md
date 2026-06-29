@@ -103,16 +103,24 @@ Copy `.env.example` → `.env` and fill SignalWire fields. **Quote values that c
 
 ### Current status (repo `.env`)
 
-As of initial migration tooling:
+Run `./scripts/signalwire/check-auth.sh` — expects all vars set and `auth: ok (HTTP 200)` on `GET /api/relay/rest/domain_applications`.
 
-| Variable | Status |
-|----------|--------|
-| `SIGNALWIRE_API_KEY` | set |
-| `SIGNALWIRE_SPACE` | missing |
-| `SIGNALWIRE_PROJECT_ID` | missing |
-| `REST_API_TOKEN` | missing (mapped from `SIGNALWIRE_API_KEY` when present) |
+**SignalWire space exploration (read-only):**
 
-Run `./scripts/signalwire/check-auth.sh` after adding missing vars (prints set/missing only, then HTTP status).
+| Resource | Count |
+|----------|-------|
+| Domain Applications | 0 (create in dashboard — see below) |
+| SIP endpoints | 0 |
+| Phone numbers | 0 |
+
+### Worker route (deployed)
+
+`GET` or `POST https://sip-webhook.loom.li/swml` returns SWML JSON:
+
+- `record_call` (wav, stereo) — parity with Twilio dual-channel recording
+- `connect` → `sip:proj_<OPENAI_PROJECT_ID>@sip.api.openai.com;transport=tls`
+
+SignalWire Domain Apps fetch SWML via **POST**; GET is for manual `curl` checks.
 
 ## SignalWire dashboard steps (besides API token)
 
@@ -120,21 +128,29 @@ Run `./scripts/signalwire/check-auth.sh` after adding missing vars (prints set/m
 2. **SIP → Domain Apps → Create** — inbound BYOC domain for the gateway.
    - Whitelist the gateway's public IP (or disable open routing).
    - **Handle using:** SWML Script.
-   - **When a call comes in:** URL of bridge SWML (`/swml`) or a dashboard SWML Resource.
+   - **When a call comes in:** `https://sip-webhook.loom.li/swml` (Worker-hosted; accepts GET or POST).
 3. **SIP credentials** — note username/password and domain FQDN for the gateway app.
 4. **(Optional) Phone number** — only if PSTN outbound tests like Twilio `/outbound-test` are needed; purchasing incurs cost.
 5. **OpenAI** — confirm SIP webhook still targets `sip-webhook.loom.li` and project ID matches SWML `connect` URI.
 
 ## Gateway app SIP settings
 
-Enter in the gateway UI (Settings → SIP):
+After creating a **SIP Domain Application** in the SignalWire dashboard, enter these in the gateway app (Settings → SIP):
 
-| Field | SignalWire source |
-|-------|-------------------|
-| Server / domain | Domain App FQDN, e.g. `yourapp.dapp.signalwire.com` (from Domain App details) |
-| Username | SIP username from Domain App / endpoint |
-| Password | SIP password |
-| Transport | TLS if offered; match Domain App requirements |
+| Field | Value |
+|-------|-------|
+| Server / domain | Domain App FQDN from dashboard, e.g. `yourapp.dapp.signalwire.com` |
+| Username | SIP username from the Domain App endpoint |
+| Password | SIP password from the Domain App endpoint |
+| Transport | TLS (match Domain App requirements) |
+
+**SWML script URL** (Domain App → Handle using → SWML Script):
+
+```
+https://sip-webhook.loom.li/swml
+```
+
+Whitelist the gateway phone's public IP on the Domain App if open routing is disabled.
 
 The gateway is SIP-agnostic (`CLAUDE.md`); no app code changes required for peer swap.
 
@@ -167,15 +183,15 @@ export REST_API_TOKEN=<api-token>
 
 Repo scripts set `PROJECT_ID` and `REST_API_TOKEN` from `SIGNALWIRE_PROJECT_ID` and `SIGNALWIRE_API_KEY`.
 
-## bridge-worker changes (planned, not yet implemented)
+## bridge-worker changes
 
-Keep Twilio routes; add SignalWire in parallel:
+Twilio routes remain; SignalWire runs in parallel:
 
-| Route | Purpose |
-|-------|---------|
-| `GET /swml` | SWML `connect` + optional `record_call` (replaces `/twiml` for SignalWire) |
-| `GET /outbound-test-swml` | SWML play/pause test audio (replaces `/outbound-test`) |
-| `POST /sw-recording` | Recording status callback (if using Worker-hosted SWML with callbacks) |
+| Route | Status | Purpose |
+|-------|--------|---------|
+| `GET/POST /swml` | **deployed** | SWML `record_call` + `connect` to OpenAI SIP (replaces `/twiml` for SignalWire) |
+| `GET /outbound-test-swml` | planned | SWML play/pause test audio (replaces `/outbound-test`) |
+| `POST /sw-recording` | planned | Recording status callback (if using Worker-hosted SWML with callbacks) |
 
 No changes to `POST /` OpenAI webhook handler.
 
@@ -187,9 +203,9 @@ No changes to `POST /` OpenAI webhook handler.
 
 ## Next migration steps
 
-1. Add `SIGNALWIRE_SPACE` and `SIGNALWIRE_PROJECT_ID` to `.env`; re-run `./scripts/signalwire/check-auth.sh` until `auth: ok`.
-2. Create Domain App + SWML in dashboard (or add `/swml` to bridge-worker and deploy).
-3. Point gateway SIP settings at SignalWire Domain App credentials.
+1. ~~Add `SIGNALWIRE_SPACE` and `SIGNALWIRE_PROJECT_ID` to `.env`~~ — done; `./scripts/signalwire/check-auth.sh` reports `auth: ok`.
+2. **Create Domain App** in SignalWire dashboard (see [dashboard steps](#signalwire-dashboard-steps-besides-api-token)) pointing SWML URL at `https://sip-webhook.loom.li/swml`.
+3. Point gateway SIP settings at the Domain App FQDN + credentials.
 4. Place test call; verify `realtime.call.incoming` in `wrangler tail` and RTP-STATS on device.
 5. Add `scripts/signalwire/download-recording.sh` (SignalWire recording API) as Twilio script parallel.
 6. Retire Twilio trunk only after SignalWire path matches recording + bidirectional audio evidence.

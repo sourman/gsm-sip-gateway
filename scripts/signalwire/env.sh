@@ -14,10 +14,12 @@ load_signalwire_env() {
     export "$line"
   done < "$env_file"
 
-  # swsh expects these names
+  # swsh expects subdomain only (e.g. "loomli"), not FQDN
+  local space="${SIGNALWIRE_SPACE:-}"
+  space="${space%.signalwire.com}"
+  export SIGNALWIRE_SPACE="$space"
   export PROJECT_ID="${PROJECT_ID:-${SIGNALWIRE_PROJECT_ID:-}}"
   export REST_API_TOKEN="${REST_API_TOKEN:-${SIGNALWIRE_API_TOKEN:-${SIGNALWIRE_API_KEY:-}}}"
-  export SIGNALWIRE_SPACE="${SIGNALWIRE_SPACE:-}"
 }
 
 var_status() {
