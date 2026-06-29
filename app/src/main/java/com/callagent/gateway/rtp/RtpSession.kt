@@ -76,7 +76,7 @@ class RtpSession(
 
     // RTP inactivity tracking
     @Volatile private var lastRtpReceivedTime = 0L
-    private val RTP_TIMEOUT_MS = 30_000L  // 30 seconds with no RTP = dead call
+    private val rtpTimeoutMs = 30_000L  // 30 seconds with no RTP = dead call
 
     // Packet counters and audio diagnostics
     @Volatile var txPacketCount = 0L; private set
@@ -112,8 +112,8 @@ class RtpSession(
     // Silence detection — only counted during non-echo periods.  On Pixel/Tensor
     // (playbackToTelephony) VOICE_CALL reads near-zero during quiet GSM pauses;
     // abandoning it after 0.5s was killing uplink right after the Twilio blurb.
-    private val SILENCE_RMS_THRESHOLD = 3
-    private val SILENCE_FRAME_LIMIT = 150   // ~3s of true silence before fallback
+    private val silenceRmsThreshold = 3
+    private val silenceFrameLimit = 150   // ~3s of true silence before fallback
     @Volatile private var voiceCallProven = false
 
     var listener: Listener? = null
@@ -122,7 +122,7 @@ class RtpSession(
         fun onRtpStarted()
         fun onRtpStopped()
         fun onRtpError(error: String)
-        fun onRtpTimeout() {}  // No RTP received for RTP_TIMEOUT_MS
+        fun onRtpTimeout() {}  // No RTP received for rtpTimeoutMs
         fun onRtpStats(stats: String) {}  // Periodic detailed stats
     }
 
@@ -610,7 +610,7 @@ class RtpSession(
     // Initial 1.0 = assume 1:1 coupling; adapts to actual modem DSP gain.
     @Volatile private var echoGainRatio = 1.0f
     private var echoGainSamples = 0
-    private val DOUBLE_TALK_RATIO get() = profile.audio.doubleTalkRatio
+    private val doubleTalkRatio get() = profile.audio.doubleTalkRatio
 
     // Noise gate: below this RMS, send silence instead of captured audio.
     // Threshold is device-specific (modem DSP noise floor varies).
@@ -639,7 +639,11 @@ class RtpSession(
         probeIncallCaptureHalOnce()
 
         record.startRecording()
-        Log.i(TAG, "Capture started: source=$audioSourceName capRate=$captureRate session=$audioSessionId gain=${captureGain}x profile=${profile.name} state=${record.recordingState}")
+        Log.i(
+            TAG,
+            "Capture started: source=$audioSourceName capRate=$captureRate session=$audioSessionId " +
+                "gain=${captureGain}x profile=${profile.name} state=${record.recordingState}"
+        )
         // Also report via RTP stats so it appears in the app log viewer
         listener?.onRtpStats("Capture: source=$audioSourceName rate=$captureRate gain=${captureGain}x profile=${profile.name}")
 
@@ -671,12 +675,12 @@ class RtpSession(
                 val isVoiceCall = currentSourceId == MediaRecorder.AudioSource.VOICE_CALL
                 val lockVoiceCall = profile.routing.playbackToTelephony && isVoiceCall && voiceCallProven
                 if (noEchoPeriod && !lockVoiceCall) {
-                    if (rawCaptureRms < SILENCE_RMS_THRESHOLD) {
+                    if (rawCaptureRms < silenceRmsThreshold) {
                         silenceFrameCount++
                         if (silenceFrameCount == 10 || silenceFrameCount == 20) {
-                            Log.w(TAG, "Source $audioSourceName low audio (no-echo): rawCapRMS=$rawCaptureRms silence=${silenceFrameCount}/${SILENCE_FRAME_LIMIT} frames")
+                            Log.w(TAG, "Source $audioSourceName low audio (no-echo): rawCapRMS=$rawCaptureRms silence=${silenceFrameCount}/${silenceFrameLimit} frames")
                         }
-                        if (silenceFrameCount >= SILENCE_FRAME_LIMIT) {
+                        if (silenceFrameCount >= silenceFrameLimit) {
                             val msg = "Source $audioSourceName SILENT ($silenceFrameCount non-echo frames) — trying fallback"
                             Log.w(TAG, msg)
                             listener?.onRtpStats(msg)
@@ -728,7 +732,7 @@ class RtpSession(
                     // check for double-talk (barge-in).
                     val expectedEcho = (echoGainRatio * decayingPlaybackRms).toInt()
                         .coerceAtLeast(noiseGateThreshold)
-                    if (rawCaptureRms > (expectedEcho * DOUBLE_TALK_RATIO).toInt()) {
+                    if (rawCaptureRms > (expectedEcho * doubleTalkRatio).toInt()) {
                         // Double-talk: caller speaking over agent — forward.
                         // Some echo leaks through but caller is audible.
                         shouldForward = true
@@ -923,7 +927,7 @@ class RtpSession(
 
 
                 val elapsed = System.currentTimeMillis() - lastRtpReceivedTime
-                if (elapsed > RTP_TIMEOUT_MS) {
+                if (elapsed > rtpTimeoutMs) {
                     Log.w(TAG, "RTP timeout: no packets received for ${elapsed / 1000}s")
                     listener?.onRtpTimeout()
                     break

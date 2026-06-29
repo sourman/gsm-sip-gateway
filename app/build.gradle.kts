@@ -1,6 +1,17 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jlleitschuh.gradle.ktlint")
+    id("io.gitlab.arturbosch.detekt")
+}
+
+ktlint {
+    android.set(true)
+}
+
+detekt {
+    config.setFrom("$rootDir/config/detekt.yml")
+    buildUponDefaultConfig = false
 }
 
 android {
@@ -43,6 +54,10 @@ android {
 
     kotlinOptions {
         jvmTarget = "1.8"
+    }
+
+    lint {
+        baseline = file("lint-baseline.xml")
     }
 }
 

@@ -453,7 +453,7 @@ class SipClient(
 
     /** Consecutive keepalive failures (OPTIONS sent with no response) */
     @Volatile private var keepaliveFailures = 0
-    private val MAX_KEEPALIVE_FAILURES = 3
+    private val maxKeepaliveFailures = 3
 
     /** Called when the connection appears dead and needs a full reconnect */
     @Volatile var onConnectionLost: (() -> Unit)? = null
@@ -488,7 +488,7 @@ class SipClient(
                     // Check if we got any response from the server recently
                     if (registered && System.currentTimeMillis() - lastServerResponseTime > 60_000) {
                         keepaliveFailures++
-                        if (keepaliveFailures >= MAX_KEEPALIVE_FAILURES) {
+                        if (keepaliveFailures >= maxKeepaliveFailures) {
                             uiLog("Keepalive failed $keepaliveFailures times, connection lost")
                             registered = false
                             onConnectionLost?.invoke()

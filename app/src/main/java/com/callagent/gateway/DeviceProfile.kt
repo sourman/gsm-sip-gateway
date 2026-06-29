@@ -276,7 +276,11 @@ data class DeviceProfile(
                     append("tinymix 'Incall_Music Audio Mixer MultiMedia1' 1 2>/dev/null; ")
                     append("tinymix 'Incall_Music Audio Mixer MultiMedia2' 1 2>/dev/null")
                 },
-                mixerDiagGrep = "tinymix 2>&1 | grep -iE '(Voice Rx|Voice Tx|Incall_Music|EC_REF|DEC[1-4] Vol|DEC[1-4] MUX|ADC[1-3] Vol|MICBIAS|RX[0-9].*[Vv]ol|SPK DRV|LINEOUT[12] Vol|SLIM TX[0-9])'",
+                mixerDiagGrep = "tinymix 2>&1 | grep -iE '(" +
+                    "Voice Rx|Voice Tx|Incall_Music|EC_REF|" +
+                    "DEC[1-4] Vol|DEC[1-4] MUX|ADC[1-3] Vol|MICBIAS|" +
+                    "RX[0-9].*[Vv]ol|SPK DRV|LINEOUT[12] Vol|SLIM TX[0-9]" +
+                    ")'",
             ),
             audio = AudioCalibration(
                 musicVolPercent = 14,

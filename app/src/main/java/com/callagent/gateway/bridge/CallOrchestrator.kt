@@ -57,7 +57,7 @@ class CallOrchestrator(
     // SIP call retry: if SIP fails while GSM is ringing, retry before giving up.
     // Transient network issues or socket races can kill the first attempt.
     private var sipCallRetries = 0
-    private val MAX_SIP_RETRIES = 2
+    private val maxSipRetries = 2
 
     /** Current bridge state */
     @Volatile var bridgeState: BridgeState = BridgeState.IDLE
@@ -173,10 +173,10 @@ class CallOrchestrator(
         // If GSM is still ringing and we haven't exhausted retries, try again.
         // Transient network issues or socket races can kill the first SIP attempt.
         if ((bridgeState == BridgeState.SIP_CALLING || bridgeState == BridgeState.SIP_RINGING)
-            && sipCallRetries < MAX_SIP_RETRIES && activeGsmCall != null) {
+            && sipCallRetries < maxSipRetries && activeGsmCall != null) {
             sipCallRetries++
-            Log.w(TAG, "SIP call failed while GSM ringing — retrying ($sipCallRetries/$MAX_SIP_RETRIES)")
-            listener?.onStateChanged(bridgeState, "SIP retry $sipCallRetries/$MAX_SIP_RETRIES")
+            Log.w(TAG, "SIP call failed while GSM ringing — retrying ($sipCallRetries/$maxSipRetries)")
+            listener?.onStateChanged(bridgeState, "SIP retry $sipCallRetries/$maxSipRetries")
             activeSipCall = null
             sipClient.removeCall(call.callId)
             // Retry after a short delay to let any transient issue settle

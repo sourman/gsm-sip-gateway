@@ -23,7 +23,7 @@ import java.nio.ByteBuffer
  */
 class StunClientTest {
 
-    private val MAGIC_COOKIE = 0x2112A442
+    private val magicCookie = 0x2112A442
 
     private fun parseResponseMethod(): Method {
         val m = StunClient::class.java.getDeclaredMethod(
@@ -51,15 +51,15 @@ class StunClientTest {
         ipParts: IntArray,
         port: Int
     ): ByteArray {
-        val xorPort = port xor (MAGIC_COOKIE ushr 16)
+        val xorPort = port xor (magicCookie ushr 16)
         val ip = (ipParts[0] shl 24) or (ipParts[1] shl 16) or (ipParts[2] shl 8) or ipParts[3]
-        val xorAddr = ip xor MAGIC_COOKIE
+        val xorAddr = ip xor magicCookie
 
         // 20-byte header + 4-byte attr header + 8-byte XOR-MAPPED-ADDRESS value
         val bb = ByteBuffer.allocate(32)
         bb.putShort(0x0101)            // Binding Success Response
         bb.putShort(12)               // message length = 4 (attr hdr) + 8 (value)
-        bb.putInt(MAGIC_COOKIE)
+        bb.putInt(magicCookie)
         bb.put(txId)                  // 12 bytes
         // XOR-MAPPED-ADDRESS attribute (type 0x0020)
         bb.putShort(0x0020)
@@ -105,7 +105,7 @@ class StunClientTest {
         val bb = ByteBuffer.allocate(20)
         bb.putShort(0x0001)            // not a Binding Success (0x0101)
         bb.putShort(0)
-        bb.putInt(MAGIC_COOKIE)
+        bb.putInt(magicCookie)
         bb.put(txId)
         assertNull(parseResponse(bb.array(), txId))
     }
@@ -131,7 +131,7 @@ class StunClientTest {
         val bb = ByteBuffer.allocate(32)
         bb.putShort(0x0101)
         bb.putShort(12)
-        bb.putInt(MAGIC_COOKIE)
+        bb.putInt(magicCookie)
         bb.put(txId)
         bb.putShort(0x0001)            // MAPPED-ADDRESS
         bb.putShort(8)
@@ -151,14 +151,14 @@ class StunClientTest {
         // Unknown attribute before XOR-MAPPED-ADDRESS must be skipped
         // (with 4-byte padding alignment).
         val txId = ByteArray(12) { (it + 1).toByte() }
-        val xorPort = 32853 xor (MAGIC_COOKIE ushr 16)
+        val xorPort = 32853 xor (magicCookie ushr 16)
         val ip = (192 shl 24) or (0 shl 16) or (2 shl 8) or 1
-        val xorAddr = ip xor MAGIC_COOKIE
+        val xorAddr = ip xor magicCookie
 
         val bb = ByteBuffer.allocate(20 + 8 + 4 + 4 + 8) // header + unknown(attr) + xor attr
         bb.putShort(0x0101)
         bb.putShort(24)                 // 8 (unknown) + 4 (pad?) + 12 (xor attr)
-        bb.putInt(MAGIC_COOKIE)
+        bb.putInt(magicCookie)
         bb.put(txId)
         // Unknown attribute: type 0x9999, length 5 (needs 3 bytes padding)
         bb.putShort(0x9999.toShort())

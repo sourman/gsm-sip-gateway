@@ -395,14 +395,16 @@ object SipBuilder {
         }
 
     private fun buildSdp(localIp: String, rtpPort: Int): String = buildString {
-        // Offer PCMA preferred, G.722 as wideband fallback.
-        // G.722 clock rate in SDP is 8000 per RFC 3551 (historical quirk).
+        // Offer both G.711 variants plus G.722; sdpPreferredPayloadType picks
+        // from the remote answer (PCMA > PCMU > G.722). G.722 clock rate in
+        // SDP is 8000 per RFC 3551 (historical quirk).
         append("v=0\r\n")
         append("o=gateway 0 0 IN IP4 $localIp\r\n")
         append("s=SIP Call\r\n")
         append("c=IN IP4 $localIp\r\n")
         append("t=0 0\r\n")
-        append("m=audio $rtpPort RTP/AVP 8 9 101\r\n")
+        append("m=audio $rtpPort RTP/AVP 0 8 9 101\r\n")
+        append("a=rtpmap:0 PCMU/8000\r\n")
         append("a=rtpmap:8 PCMA/8000\r\n")
         append("a=rtpmap:9 G722/8000\r\n")
         append("a=rtpmap:101 telephone-event/8000\r\n")
