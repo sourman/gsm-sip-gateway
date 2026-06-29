@@ -555,7 +555,10 @@ data class DeviceProfile(
                 doubleTalkRatio = 1.5f,
             ),
             routing = HalRoutingProfile(
-                requireSpeakerMode = true,
+                // TYPE_TELEPHONY + INCALL_TX tinymix routes SIP playback into modem
+                // uplink; speaker mode is not required (and stereo speaker leaks
+                // OpenAI to one ear only).
+                requireSpeakerMode = false,
                 incallMusicParam = "incall_music_enabled",
                 voiceDownlinkWorks = false,
                 routeChangeDelayMs = 500,

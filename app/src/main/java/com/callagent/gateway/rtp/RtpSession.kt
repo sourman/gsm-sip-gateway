@@ -109,11 +109,12 @@ class RtpSession(
     private val silentSourceIds = mutableSetOf<Int>()
     @Volatile private var currentSourceId: Int = -1
     private data class SourceConfig(val source: Int, val name: String, val rate: Int)
-    // Silence detection thresholds — only counted during non-echo periods
-    // (when decayingPlaybackRms <= echoGateThreshold) to avoid false resets
-    // from incall_music echo leaking back through VOICE_CALL capture.
-    private val SILENCE_RMS_THRESHOLD = 10   // Below this = truly dead source (ADC noise floor)
-    private val SILENCE_FRAME_LIMIT = 25     // 25 non-echo frames (~0.5s) — fast fallback for testing
+    // Silence detection — only counted during non-echo periods.  On Pixel/Tensor
+    // (playbackToTelephony) VOICE_CALL reads near-zero during quiet GSM pauses;
+    // abandoning it after 0.5s was killing uplink right after the Twilio blurb.
+    private val SILENCE_RMS_THRESHOLD = 3
+    private val SILENCE_FRAME_LIMIT = 150   // ~3s of true silence before fallback
+    @Volatile private var voiceCallProven = false
 
     var listener: Listener? = null
 
@@ -661,7 +662,9 @@ class RtpSession(
                 // By only counting non-echo frames, we accurately detect dead
                 // sources regardless of whether the agent is speaking.
                 val noEchoPeriod = decayingPlaybackRms <= echoGateThreshold
-                if (noEchoPeriod) {
+                val isVoiceCall = currentSourceId == MediaRecorder.AudioSource.VOICE_CALL
+                val lockVoiceCall = profile.routing.playbackToTelephony && isVoiceCall && voiceCallProven
+                if (noEchoPeriod && !lockVoiceCall) {
                     if (rawCaptureRms < SILENCE_RMS_THRESHOLD) {
                         silenceFrameCount++
                         if (silenceFrameCount == 10 || silenceFrameCount == 20) {
@@ -679,6 +682,7 @@ class RtpSession(
                         }
                     } else {
                         silenceFrameCount = 0  // Source delivered audio during non-echo → working
+                        if (isVoiceCall && rawCaptureRms > 30) voiceCallProven = true
                     }
                 }
                 // During echo periods: don't update counter (can't distinguish
