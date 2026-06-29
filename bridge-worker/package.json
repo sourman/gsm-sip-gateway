@@ -1,0 +1,14 @@
+{
+  "name": "openai-realtime-sip-webhook",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^4.104.0"
+  }
+}
