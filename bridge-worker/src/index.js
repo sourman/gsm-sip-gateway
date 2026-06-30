@@ -91,6 +91,9 @@ const worker = {
       (request.method === "GET" || request.method === "POST") &&
       url.pathname === "/swml"
     ) {
+      const fromHeader = request.headers.get("from") || request.headers.get("From") || "";
+      const callId = request.headers.get("x-signalwire-call-id") || "";
+      console.log(`SWML ${request.method} from=${fromHeader} call_id=${callId}`);
       return swmlBridgeResponse(env, url);
     }
 
@@ -119,16 +122,17 @@ const worker = {
     // Recording status callback (SignalWire): log recording URL for the SIP-side recording.
     if (request.method === "POST" && url.pathname === "/sw-recording") {
       const body = await request.text();
+      console.log(`SW recording callback: ${body.slice(0, 1000)}`);
       try {
         const data = JSON.parse(body);
         const recUrl = data.params?.url || data.params?.record?.url || data.params?.recording_url || data.recording_url;
         const callId = data.params?.call_id || data.call_id;
         const duration = data.params?.record?.duration || data.params?.duration || data.duration;
         const state = data.params?.state || data.state;
-        console.log(`SW recording ${state || "?"} call_id=${callId || "?"} dur=${duration || "?"}s url=${recUrl}`);
-        if (!recUrl) console.log(`SW recording raw: ${body.slice(0, 500)}`);
+        const eventType = data.event_type || data.type;
+        console.log(`SW recording event=${eventType || "?"} state=${state || "?"} call_id=${callId || "?"} dur=${duration || "?"}s url=${recUrl || "none"}`);
       } catch {
-        console.log(`SW recording callback: ${body.slice(0, 500)}`);
+        console.log(`SW recording callback parse failed, raw: ${body.slice(0, 500)}`);
       }
       return new Response(null, { status: 204 });
     }
@@ -187,9 +191,12 @@ const worker = {
       type: "realtime",
       model: env.REALTIME_MODEL || "gpt-realtime-2",
       instructions: INSTRUCTIONS,
+      modalities: ["text", "audio"],
+      output_modalities: ["audio"],
       audio: {
         input: {
           transcription: { model: "gpt-4o-mini-transcribe" },
+          turn_detection: { type: "server_vad" },
         },
         output: { voice: env.REALTIME_VOICE || "alloy" },
       },
