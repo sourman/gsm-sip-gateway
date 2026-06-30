@@ -91,7 +91,7 @@ const worker = {
       (request.method === "GET" || request.method === "POST") &&
       url.pathname === "/swml"
     ) {
-      return swmlBridgeResponse(env);
+      return swmlBridgeResponse(env, url);
     }
 
     // SWML for SignalWire outbound PSTN test calls: hold the A-leg while the
@@ -116,7 +116,24 @@ const worker = {
       });
     }
 
-    // Recording status callback: log the recording URL for evidence collection.
+    // Recording status callback (SignalWire): log recording URL for the SIP-side recording.
+    if (request.method === "POST" && url.pathname === "/sw-recording") {
+      const body = await request.text();
+      try {
+        const data = JSON.parse(body);
+        const recUrl = data.params?.url || data.params?.record?.url || data.params?.recording_url || data.recording_url;
+        const callId = data.params?.call_id || data.call_id;
+        const duration = data.params?.record?.duration || data.params?.duration || data.duration;
+        const state = data.params?.state || data.state;
+        console.log(`SW recording ${state || "?"} call_id=${callId || "?"} dur=${duration || "?"}s url=${recUrl}`);
+        if (!recUrl) console.log(`SW recording raw: ${body.slice(0, 500)}`);
+      } catch {
+        console.log(`SW recording callback: ${body.slice(0, 500)}`);
+      }
+      return new Response(null, { status: 204 });
+    }
+
+    // Recording status callback (Twilio): log the recording URL for evidence collection.
     if (request.method === "POST" && url.pathname === "/recording") {
       const form = await request.formData();
       const recUrl = form.get("RecordingUrl");
@@ -207,17 +224,19 @@ const worker = {
   },
 };
 
-function swmlBridgeResponse(env) {
+function swmlBridgeResponse(env, url) {
   const projectId = env.OPENAI_PROJECT_ID;
   if (!projectId) {
     return new Response("OPENAI_PROJECT_ID not configured", { status: 500 });
   }
   const sipUri = `sip:${projectId}@sip.api.openai.com;transport=tls`;
+  const recCallback = `https://${url.host}/sw-recording`;
   const swml = {
     version: "1.0.0",
     sections: {
       main: [
-        { record_call: { format: "wav", stereo: true } },
+        { answer: {} },
+        { record_call: { format: "wav", stereo: true, direction: "both", status_url: recCallback } },
         { connect: { to: sipUri } },
       ],
     },

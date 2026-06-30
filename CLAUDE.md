@@ -93,7 +93,7 @@ Goal: support as many Android devices as possible. Each device is handled by a `
 
 Unknown devices auto-detect to a generic Qualcomm / Exynos / Generic profile (Android APIs only, no mixer hacks). To support a new device: add a profile, dump its `tinymix` controls via the in-app diagnostics, and tune the mixer setup/restore commands.
 
-**Pixel 7 requires the downlink-routing mixer fix.** `DeviceProfile.pixel7Tensor()` sets `tinymix 'Incall Capture Stream0' DL` in `mixerSetupCmd` (commit aad6124). Without it the AOC DSP routes nothing into the incall capture ring buffer, and `AudioRecord(VOICE_CALL)` reads silence *even after the policy fix above is applied*. Both fixes are required on the Pixel 7 — the policy fix un-silences the source, this mixer fix routes audio into it.
+**Pixel 7 requires the uplink-routing mixer fix.** `DeviceProfile.pixel7Tensor()` sets `tinymix 'Incall Capture Stream0' UL` in `mixerSetupCmd`. Without this the AOC DSP routes nothing into the incall capture ring buffer, and `AudioRecord(VOICE_CALL)` reads silence *even after the policy fix above is applied*. The original DL (downlink-only) setting captured the agent's response instead of the caller's voice, causing echo-gated silence on the SIP side. UL routes the caller's uplink into the capture buffer; with `playbackToTelephony=true`, the agent's audio goes via the EP6 INCALL_TX mixer path instead. Both fixes are required on the Pixel 7.
 
 ## Test rig (SignalWire + bridge-worker)
 

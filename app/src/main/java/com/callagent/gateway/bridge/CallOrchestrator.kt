@@ -38,7 +38,8 @@ import java.net.InetSocketAddress
  */
 class CallOrchestrator(
     private val context: Context,
-    private val sipClient: SipClient
+    private val sipClient: SipClient,
+    private val sipOutboundTarget: String
 ) : SipClient.Listener, GsmCallManager.Listener, SipCall.Listener {
 
     private var activeRtpSession: RtpSession? = null
@@ -455,11 +456,11 @@ class CallOrchestrator(
         Log.i(TAG, "Inbound flow: placing SIP call for GSM caller $callerNumber")
 
         bridgeState = BridgeState.SIP_CALLING
-        listener?.onStateChanged(bridgeState, "Calling Asterisk for $callerNumber")
+        listener?.onStateChanged(bridgeState, "Calling SIP target for $callerNumber")
 
         val rtpPort = allocateRtpPort()
         val sipCall = sipClient.makeCall(
-            targetExtension = sipClient.username, // call our own extension — Asterisk routes to agent
+            targetExtension = sipOutboundTarget,
             localRtpPort = rtpPort,
             callerIdNumber = callerNumber,
             callerIdName = callerNumber
@@ -467,14 +468,14 @@ class CallOrchestrator(
         sipCall.listener = this
         activeSipCall = sipCall
 
-        Log.i(TAG, "SIP INVITE sent to Asterisk (caller=$callerNumber, rtp=$rtpPort)")
+        Log.i(TAG, "SIP INVITE sent to $sipOutboundTarget (caller=$callerNumber, rtp=$rtpPort)")
 
-        // Timeout: if Asterisk doesn't answer within 30s, tear down
+        // Timeout: if SIP doesn't answer within 30s, tear down
         Thread({
             Thread.sleep(SIP_CALL_TIMEOUT_MS)
             if (bridgeState == BridgeState.SIP_CALLING || bridgeState == BridgeState.SIP_RINGING) {
-                Log.w(TAG, "SIP call timeout — Asterisk didn't answer in ${SIP_CALL_TIMEOUT_MS / 1000}s")
-                tearDown("Asterisk not answering")
+                Log.w(TAG, "SIP call timeout — didn't answer in ${SIP_CALL_TIMEOUT_MS / 1000}s")
+                tearDown("SIP not answering")
             }
         }, "SIP-Timeout").start()
     }

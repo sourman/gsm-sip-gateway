@@ -1297,8 +1297,8 @@ class RtpSession(
         }
         val waitMs = targetStart - System.currentTimeMillis()
         if (waitMs > 0) {
-            Log.i(TAG, "Capture warm-up: waiting ${waitMs}ms for incall DL route")
-            listener?.onRtpStats("Capture warm-up: ${waitMs}ms for DL route")
+            Log.i(TAG, "Capture warm-up: waiting ${waitMs}ms for incall capture route")
+            listener?.onRtpStats("Capture warm-up: ${waitMs}ms for capture route")
             try { Thread.sleep(waitMs.coerceAtMost(5000)) } catch (_: InterruptedException) { return }
         }
     }
@@ -1345,7 +1345,7 @@ class RtpSession(
     private fun reAssertCaptureRoute() {
         if (!hasIncallCaptureRoute()) return
         val resolved = DeviceProfile.resolveCmd(
-            "tinymix 'Incall Capture Stream0' DL 2>/dev/null"
+            "tinymix 'Incall Capture Stream0' UL_DL 2>/dev/null"
         )
         if (resolved.isEmpty()) return
         try {

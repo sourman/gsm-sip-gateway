@@ -52,6 +52,7 @@ class GatewayService : Service() {
     private var cfgUser = ""
     private var cfgPass = ""
     private var cfgLocalServer = false
+    private var cfgOutboundTarget = SipConfig.DEFAULT_OUTBOUND_TARGET
     private var currentLocalIp = ""
 
     // ── Call tracking ───────────────────────────────────
@@ -296,6 +297,7 @@ class GatewayService : Service() {
         cfgUser = username
         cfgPass = password
         cfgLocalServer = localServer
+        cfgOutboundTarget = SipConfig.resolveOutboundTarget(prefs)
 
         notifStatusText = "Connecting"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -365,7 +367,7 @@ class GatewayService : Service() {
         )
         sipClient = sip
 
-        val orch = CallOrchestrator(this, sip)
+        val orch = CallOrchestrator(this, sip, cfgOutboundTarget)
         orch.listener = object : CallOrchestrator.OrchestratorListener {
             override fun onStateChanged(state: CallOrchestrator.BridgeState, info: String) {
                 Log.i(TAG, "Bridge: $state - $info")

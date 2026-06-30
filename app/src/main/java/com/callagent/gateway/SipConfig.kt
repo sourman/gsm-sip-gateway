@@ -17,6 +17,7 @@ object SipConfig {
     const val KEY_PASS = "pass"
     const val KEY_LOCAL_SERVER = "local_server"
     const val KEY_AUTOCONNECT = "autoconnect"
+    const val KEY_OUTBOUND_TARGET = "outbound_target"
 
     val defaultServer: String get() = BuildConfig.DEFAULT_SIP_SERVER
     val defaultUser: String get() = BuildConfig.DEFAULT_SIP_USER
@@ -24,6 +25,7 @@ object SipConfig {
     const val DEFAULT_PASS = ""
     const val DEFAULT_LOCAL_SERVER = false
     const val DEFAULT_AUTOCONNECT = true
+    const val DEFAULT_OUTBOUND_TARGET = "+12015029074"
 
     fun openPrefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -54,6 +56,9 @@ object SipConfig {
             DEFAULT_AUTOCONNECT
         }
 
+    fun resolveOutboundTarget(prefs: SharedPreferences): String =
+        prefs.getString(KEY_OUTBOUND_TARGET, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_OUTBOUND_TARGET
+
     fun isConfigured(prefs: SharedPreferences): Boolean =
         resolveServer(prefs).isNotBlank() && resolveUser(prefs).isNotBlank()
 
@@ -64,6 +69,7 @@ object SipConfig {
         val pass: String,
         val localServer: Boolean,
         val autoconnect: Boolean,
+        val outboundTarget: String,
     )
 
     fun resolve(prefs: SharedPreferences): Resolved = Resolved(
@@ -73,5 +79,6 @@ object SipConfig {
         pass = resolvePass(prefs),
         localServer = resolveLocalServer(prefs),
         autoconnect = resolveAutoconnect(prefs),
+        outboundTarget = resolveOutboundTarget(prefs),
     )
 }

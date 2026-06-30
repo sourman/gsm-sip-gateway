@@ -519,11 +519,16 @@ data class DeviceProfile(
                     // Mute physical mic
                     append("tinymix 'Voice Call Mic Mute' 1 2>/dev/null; ")
                     append("tinymix 'Incall Mic Mute' 1 2>/dev/null; ")
-                    // Route modem downlink (DL) into the incall capture ring buffer.
+                    // Route modem audio into the incall capture ring buffer.
                     // Without this the AOC DSP routes nothing into audio_incall_cap_0
-                    // and AudioRecord(VOICE_CALL) reads all-zero PCM (the "silence" bug).
-                    // ENUM values: Off / UL / DL / UL_DL / 3MIC. DL = downlink only.
-                    append("tinymix 'Incall Capture Stream0' DL 2>/dev/null; ")
+                    // and AudioRecord(VOICE_CALL) reads all-zero PCM.
+                    // ENUM values: Off / UL / DL / UL_DL / 3MIC.
+                    // UL_DL: captures both uplink (caller voice) and downlink.
+                    // Pure UL was too sparse — GSM DTX/VAD causes uplink gaps
+                    // (91/1187 frames). With playbackToTelephony=true, agent audio
+                    // goes via EP6 INCALL_TX, not through this buffer, so the
+                    // downlink component here is the GSM modem's downlink — no echo.
+                    append("tinymix 'Incall Capture Stream0' UL_DL 2>/dev/null; ")
                     // Enable INCALL playback stream (opens modem TX path)
                     append("tinymix 'Incall Playback Stream0' 1 2>/dev/null; ")
                     // Route EP6 TX to INCALL_TX (EP6 = deep-buffer-playback from mixer_paths.xml)
@@ -556,7 +561,7 @@ data class DeviceProfile(
                 captureGain = 4,
                 playbackGain = 2,
                 voiceCallVolPercent = 70,
-                noiseGateThreshold = 15,   // VOICE_DOWNLINK captures very quietly on aoc-snd-card
+                noiseGateThreshold = 15,   // UL capture on aoc-snd-card has a low noise floor
                 echoGateThreshold = 300,
                 doubleTalkRatio = 1.5f,
             ),
